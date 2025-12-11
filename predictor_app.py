@@ -61,56 +61,6 @@ auto_train_enabled = True
 training_lock = threading.Lock()
 all_training_data = None  # Store all data for instant sync
 
-# ============================================================================
-# GAMBLING APPLICATION - PROFIT/LOSS SYSTEM
-# ============================================================================
-# HOW THE APPLICATION WORKS:
-#
-# 1. DATA COLLECTION (main.py):
-#    - Continuously monitors Aviator game for new payout multipliers
-#    - Saves each multiplier with timestamp to CSV file
-#    - Example: "2025-12-10 23:45:17, 2.5x"
-#
-# 2. MODEL TRAINING (train_model):
-#    - Loads historical data from CSV
-#    - Extracts 70+ time-series features (rolling stats, trends, patterns)
-#    - Trains ensemble ML model (XGBoost, LightGBM, RandomForest, etc.)
-#    - Model learns patterns to predict next multiplier
-#
-# 3. PREDICTION (predict_next):
-#    - Uses trained model to predict next multiplier range
-#    - Example: "2.3x - 3.8x" (min_range = 2.3x, max_range = 3.8x)
-#    - Stores prediction in current_prediction
-#
-# 4. BETTING DECISION (simulate_bet):
-#    - RULE 1: If pred_min < 2.0 → NO BET (skip this round)
-#    - RULE 2: If pred_min > 2.0 → PLACE BET (₹100)
-#
-# 5. ACTUAL RESULT ARRIVES (check_and_process_bet):
-#    - New multiplier appears in CSV (e.g., 3.2x)
-#    - Compares actual vs predicted minimum range
-#    - RULE 3: If actual >= pred_min → WIN → Profit = pred_min × 100
-#    - RULE 4: If actual < pred_min → LOSS → Loss = 100
-#
-# 6. PROFIT/LOSS CALCULATION:
-#    WIN Example:
-#    - pred_min = 2.5x, actual = 3.2x, bet = ₹100
-#    - Profit = 2.5 × 100 = ₹250 (displayed)
-#    - Wallet: balance - ₹100 (bet) + ₹250 (return) = balance + ₹150 (net)
-#
-#    LOSS Example:
-#    - pred_min = 2.5x, actual = 1.8x, bet = ₹100
-#    - Loss = ₹100
-#    - Wallet: balance - ₹100 (bet) = balance - ₹100 (net)
-#
-# 7. WALLET UPDATE:
-#    - Starting balance: ₹50,000
-#    - Each bet updates current_balance
-#    - Total P/L = current_balance - initial_balance (₹50,000)
-#    - All bets recorded in betting_history for tracking
-#
-# ============================================================================
-
 # Betting simulation storage
 betting_history = []  # List of bets: {timestamp, bet_amount, predicted_range, actual_multiplier, profit_loss, balance}
 current_balance = 50000.0  # Starting balance (max amount)
@@ -126,6 +76,46 @@ min_range_bets = []  # Bets based on minimum range value
 prediction_bets = []  # Bets based on prediction value
 min_range_balance = 50000.0  # Balance for minimum range bets
 prediction_balance = 50000.0  # Balance for prediction value bets
+
+# File to persist every bet decision
+bet_log_file = os.path.join(os.path.dirname(__file__), "betting_log.csv")
+
+
+def append_bet_to_csv(bet_record: dict):
+    """Persist a single bet decision to betting_log.csv."""
+    try:
+        # Define stable header order
+        headers = [
+            "timestamp",
+            "bet_type",
+            "bet_placed",
+            "predicted_range",
+            "pred_min",
+            "pred_max",
+            "predicted_value",
+            "actual_multiplier",
+            "bet_amount",
+            "payout",          # total return when win (0 when loss)
+            "profit_loss",     # net change to wallet
+            "balance_before",
+            "balance_after",
+            "is_win",
+            "confidence",
+        ]
+
+        # Write header if file does not exist
+        write_header = not os.path.exists(bet_log_file)
+        with open(bet_log_file, "a", newline="", encoding="utf-8") as f:
+            import csv
+
+            writer = csv.DictWriter(f, fieldnames=headers)
+            if write_header:
+                writer.writeheader()
+            # Filter to known headers; default missing to ''
+            row = {h: bet_record.get(h, "") for h in headers}
+            writer.writerow(row)
+    except Exception as e:
+        print(f"⚠️  Failed to append bet to CSV: {e}")
 
 def load_latest_csv():
     """Load the most recent CSV file from the directory."""
@@ -1032,31 +1022,25 @@ def simulate_bet_min_range(pred_min, actual_multiplier, bet_amount, balance):
     is_win = actual_multiplier >= pred_min
     
     if is_win:
-        # Rule 3: WIN → Profit = pred_min × 100
-        # Example: pred_min = 2.5x → Profit = 2.5 × 100 = ₹250
-        profit_loss = pred_min * bet_amount
-        
-        # Wallet calculation: Deduct bet, then add return
-        # balance - bet_amount + (pred_min × bet_amount)
-        # = balance + (pred_min - 1) × bet_amount
-        # Example: balance - 100 + 250 = balance + 150
-        new_balance = balance - bet_amount + (pred_min * bet_amount)
+        # Rule 3: WIN → Profit (display payout) = pred_min × 100
+        payout = pred_min * bet_amount
+        # Net change to wallet = payout - bet_amount
+        profit_loss = payout - bet_amount
+        new_balance = balance + profit_loss
     else:
         # Rule 4: LOSS → Loss = 100
-        # Example: Loss = ₹100
+        payout = 0
         profit_loss = -bet_amount
-        
-        # Wallet calculation: Only deduct bet, no return
-        # balance - bet_amount
-        # Example: balance - 100
-        new_balance = balance - bet_amount
+        new_balance = balance + profit_loss
     
     # Ensure balance stays within bounds [0, max_balance]
     new_balance = min(max_balance, max(0, new_balance))
     
     return {
         'is_win': is_win,
-        'profit_loss': round(profit_loss, 2),  # Positive for win (pred_min × 100), negative for loss (-100)
+        'bet_placed': True,
+        'payout': round(payout, 2),           # Total return when win (0 when loss)
+        'profit_loss': round(profit_loss, 2), # Net change to wallet
         'balance_after': round(new_balance, 2)
     }
 
@@ -1067,8 +1051,10 @@ def simulate_bet_prediction(predicted_value, actual_multiplier, bet_amount, bala
     is_win = actual_multiplier >= (predicted_value * (1 - tolerance))
     
     if is_win:
-        profit_loss = (actual_multiplier - 1) * bet_amount
+        payout = actual_multiplier * bet_amount
+        profit_loss = payout - bet_amount  # net change
     else:
+        payout = 0
         profit_loss = -bet_amount
     
     new_balance = min(max_balance, balance + profit_loss)
@@ -1076,6 +1062,8 @@ def simulate_bet_prediction(predicted_value, actual_multiplier, bet_amount, bala
     
     return {
         'is_win': is_win,
+        'bet_placed': True,
+        'payout': round(payout, 2),
         'profit_loss': round(profit_loss, 2),
         'balance_after': round(new_balance, 2)
     }
@@ -1149,34 +1137,36 @@ def simulate_bet(prediction_data, actual_multiplier):
         # Store balance before bet for record keeping
         wallet_balance_before = current_balance
         
-        # Get profit/loss amount (already calculated correctly in simulate_bet_min_range)
+        # Get profit/loss amount (net change) and payout
         profit_loss_amount = min_range_result['profit_loss']
+        payout_amount = min_range_result.get('payout', 0)
         
         # Update wallet balance: Use the balance_after from simulate_bet_min_range
         # This already accounts for: deduct bet, then add return if win
         current_balance = min_range_result['balance_after']
         
         # Log the result with clear rule indication
+        net_change = current_balance - wallet_balance_before
         if min_range_result['is_win']:
             # RULE 3: WIN → Profit = pred_min × 100
-            net_change = current_balance - wallet_balance_before
-            print(f"✅ RULE 3 (WIN): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Profit=₹{profit_loss_amount:.2f} (pred_min×100), Net Change=₹{net_change:.2f}, Balance: ₹{wallet_balance_before:.2f} → ₹{current_balance:.2f}")
+            print(f"✅ RULE 3 (WIN): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Payout=₹{payout_amount:.2f}, Net Change=₹{net_change:.2f}, Balance: ₹{wallet_balance_before:.2f} → ₹{current_balance:.2f}")
         else:
             # RULE 4: LOSS → Loss = 100
-            net_change = current_balance - wallet_balance_before
             print(f"❌ RULE 4 (LOSS): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Loss=₹{abs(profit_loss_amount):.2f}, Net Change=₹{net_change:.2f}, Balance: ₹{wallet_balance_before:.2f} → ₹{current_balance:.2f}")
         
         # Record minimum range bet (only if bet was placed, which it was since we passed the pred_min > 2.0 check)
         # Calculate profit based on minimum range value (pred_min), not actual multiplier
-        calculated_profit = min_range_result['profit_loss']  # Already calculated from pred_min
+        calculated_profit = min_range_result['profit_loss']  # Net change (payout - bet)
         
         min_range_bet = {
             'timestamp': timestamp,
             'bet_amount': round(bet_amount_per_strategy, 2),
             'bet_type': 'min_range',
+            'bet_placed': True,
             'predicted_value': round(pred_min, 2),  # Minimum range value
             'actual_multiplier': round(actual_multiplier, 2),  # Actual outcome (for reference only, NOT used for profit)
-            'profit_loss': calculated_profit,  # Profit calculated ONLY from pred_min, NOT from actual_multiplier
+            'payout': round(payout_amount, 2),       # Total return when win (0 when loss)
+            'profit_loss': calculated_profit,        # Net change (added/subtracted to wallet)
             'balance_before': round(wallet_balance_before, 2),  # Wallet balance before bet
             'balance_after': round(current_balance, 2),  # Wallet balance after bet (updated above)
             'is_win': min_range_result['is_win'],
@@ -1185,6 +1175,7 @@ def simulate_bet(prediction_data, actual_multiplier):
         }
         min_range_bets.append(min_range_bet)
         betting_history.append(min_range_bet)
+        append_bet_to_csv(min_range_bet)
     
     # Record prediction value bet (optional - separate strategy)
     if prediction_result:
@@ -1193,8 +1184,10 @@ def simulate_bet(prediction_data, actual_multiplier):
             'timestamp': timestamp,
             'bet_amount': round(bet_amount_per_strategy, 2),
             'bet_type': 'prediction',
+            'bet_placed': True,
             'predicted_value': round(predicted_value, 2),
             'actual_multiplier': round(actual_multiplier, 2),
+            'payout': round(prediction_result.get('payout', 0), 2),
             'profit_loss': prediction_result['profit_loss'],
             'balance_before': round(balance_before_pred, 2),
             'balance_after': prediction_result['balance_after'],
@@ -1203,6 +1196,7 @@ def simulate_bet(prediction_data, actual_multiplier):
         }
         prediction_bets.append(prediction_bet)
         betting_history.append(prediction_bet)
+        append_bet_to_csv(prediction_bet)
     
     last_bet_timestamp = timestamp
     
