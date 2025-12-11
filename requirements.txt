@@ -1,0 +1,10 @@
+selenium
+pandas
+flask
+scikit-learn
+numpy
+joblib
+watchdog
+xgboost
+lightgbm
+scikit-learn>=1.0
