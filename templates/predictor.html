@@ -315,6 +315,7 @@
                     <tr>
                         <th>Time</th>
                         <th>Type</th>
+                        <th>Bet Placed</th>
                         <th>Bet (₹)</th>
                         <th>Predicted Min Range</th>
                         <th>Actual</th>
@@ -652,28 +653,40 @@
                     allBets.slice(0, 100).forEach(bet => {
                         const row = document.createElement('tr');
                         const profitClass = bet.profit_loss >= 0 ? 'profit' : 'loss';
-                        // Handle both bool and int (0/1) for is_win
+                        // Handle both bool and int (0/1) for is_win and bet_placed
                         const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
-                        const resultBadge = isWin
-                            ? '<span class="win-badge">⭐ WIN</span>' 
-                            : '<span class="loss-badge">LOSS</span>';
+                        const betPlaced = bet.bet_placed === true || bet.bet_placed === 1 || bet.bet_placed === '1' || bet.bet_placed === 'True';
+                        
+                        const resultBadge = betPlaced 
+                            ? (isWin
+                                ? '<span class="win-badge">⭐ WIN</span>' 
+                                : '<span class="loss-badge">LOSS</span>')
+                            : '<span style="background: #999; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">NO BET</span>';
+                        
+                        const betPlacedBadge = betPlaced
+                            ? '<span style="background: #38ef7d; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">YES</span>'
+                            : '<span style="background: #f5576c; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">NO</span>';
                         
                         const betType = bet.bet_type === 'min_range' 
                             ? '<span style="background: #667eea; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">Min Range</span>'
                             : '<span style="background: #f5576c; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">Prediction</span>';
                         
                         const predictedDisplay = bet.bet_type === 'min_range' 
-                            ? `<strong style="color: #667eea;">${bet.predicted_value}x (Min Range)</strong>`
-                            : `${bet.predicted_value}x (Prediction)`;
+                            ? `<strong style="color: #667eea;">${bet.predicted_value || 'N/A'}x (Min Range)</strong>`
+                            : `${bet.predicted_value || 'N/A'}x (Prediction)`;
+                        
+                        // Show bet amount or "N/A" if no bet placed
+                        const betAmountDisplay = betPlaced ? `₹${(bet.bet_amount || 0).toFixed(2)}` : 'N/A';
                         
                         row.innerHTML = `
                             <td>${bet.timestamp}</td>
                             <td>${betType}</td>
-                            <td>₹${bet.bet_amount.toFixed(2)}</td>
+                            <td>${betPlacedBadge}</td>
+                            <td>${betAmountDisplay}</td>
                             <td>${predictedDisplay}</td>
-                            <td>${bet.actual_multiplier}x</td>
-                            <td class="${profitClass}">₹${bet.profit_loss >= 0 ? '+' : ''}${bet.profit_loss.toFixed(2)}</td>
-                            <td>₹${bet.balance_after.toLocaleString('en-IN')}</td>
+                            <td>${bet.actual_multiplier || 'N/A'}x</td>
+                            <td class="${profitClass}">₹${(bet.profit_loss || 0) >= 0 ? '+' : ''}${(bet.profit_loss || 0).toFixed(2)}</td>
+                            <td>₹${(bet.balance_after || bet.balance_before || 0).toLocaleString('en-IN')}</td>
                             <td>${resultBadge}</td>
                         `;
                         tbody.appendChild(row);

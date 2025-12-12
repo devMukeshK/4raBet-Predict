@@ -1034,7 +1034,7 @@ def simulate_bet_min_range(pred_min, actual_multiplier, bet_amount, balance):
         new_balance = balance + profit_loss
     
     # Ensure balance stays within bounds [0, max_balance]
-    new_balance = min(max_balance, max(0, new_balance))
+    new_balance = max(0, new_balance)
     
     return {
         'is_win': is_win,
@@ -1071,6 +1071,7 @@ def simulate_bet_prediction(predicted_value, actual_multiplier, bet_amount, bala
 def simulate_bet(prediction_data, actual_multiplier):
     """Simulate bets based on both minimum range and prediction value.
     IMPORTANT: Only places bets when pred_min > 2.0 (strictly greater than 2.0).
+    Always saves a record to CSV, even when bet is NOT placed.
     """
     global current_balance, base_bet_amount, max_balance, betting_history, last_bet_timestamp
     global min_range_bets, prediction_bets, min_range_balance, prediction_balance
@@ -1092,22 +1093,108 @@ def simulate_bet(prediction_data, actual_multiplier):
     
     # Ensure pred_min is at least 1.0
     pred_min = max(1.0, pred_min)
+    pred_max = max(pred_min, pred_max)  # Ensure pred_max >= pred_min
     predicted_value = max(1.0, predicted_value)
     
-    # RULE 1: When pred_min < 2.0: Do NOT bet, do NOT calculate profit/loss, do NOT update wallet
-    # RULE 2: When pred_min > 2.0: Bet and calculate profit/loss
-    # Must be strictly > 2.0 (not >= 2.0)
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    confidence = prediction_data.get('confidence', 0)
+    
+    # Store balance before any bet processing
+    wallet_balance_before = current_balance
+    prediction_balance_before = prediction_balance
+    
+    # RULE 1: When pred_min <= 2.0: Do NOT bet, but STILL SAVE RECORD with bet_placed=False
     if pred_min <= 2.0:
-        print(f"⏭️  RULE 1: Bet BLOCKED - pred_min ({pred_min:.2f}x) ≤ 2.0x. No bet, no profit/loss calculation, no wallet update.")
-        return None  # Return None immediately - no bet processing, no profit/loss calculation, no wallet update
+        print(f"⏭️  RULE 1: Bet BLOCKED - pred_min ({pred_min:.2f}x) ≤ 2.0x. Recording decision with bet_placed=False.")
+        
+        # Save record for min_range strategy (bet NOT placed)
+        min_range_bet = {
+            'timestamp': timestamp,
+            'bet_type': 'min_range',
+            'bet_placed': False,  # FLAG: Bet was NOT placed
+            'predicted_range': pred_range,
+            'pred_min': round(pred_min, 2),
+            'pred_max': round(pred_max, 2),
+            'predicted_value': round(predicted_value, 2),
+            'actual_multiplier': round(actual_multiplier, 2),
+            'bet_amount': 0.0,  # No bet placed
+            'payout': 0.0,
+            'profit_loss': 0.0,  # No profit/loss since no bet
+            'balance_before': round(wallet_balance_before, 2),
+            'balance_after': round(wallet_balance_before, 2),  # Balance unchanged
+            'is_win': False,  # N/A since no bet
+            'confidence': confidence
+        }
+        min_range_bets.append(min_range_bet)
+        betting_history.append(min_range_bet)
+        append_bet_to_csv(min_range_bet)
+        
+        # Save record for prediction strategy (bet NOT placed)
+        prediction_bet = {
+            'timestamp': timestamp,
+            'bet_type': 'prediction',
+            'bet_placed': False,  # FLAG: Bet was NOT placed
+            'predicted_range': pred_range,
+            'pred_min': round(pred_min, 2),
+            'pred_max': round(pred_max, 2),
+            'predicted_value': round(predicted_value, 2),
+            'actual_multiplier': round(actual_multiplier, 2),
+            'bet_amount': 0.0,  # No bet placed
+            'payout': 0.0,
+            'profit_loss': 0.0,  # No profit/loss since no bet
+            'balance_before': round(prediction_balance_before, 2),
+            'balance_after': round(prediction_balance_before, 2),  # Balance unchanged
+            'is_win': False,  # N/A since no bet
+            'confidence': confidence
+        }
+        prediction_bets.append(prediction_bet)
+        betting_history.append(prediction_bet)
+        append_bet_to_csv(prediction_bet)
+        
+        last_bet_timestamp = timestamp
+        return {
+            'timestamp': timestamp,
+            'min_range_bet': min_range_bet,
+            'prediction_bet': prediction_bet,
+            'total_profit_loss': 0.0
+        }
     
     # Bet amount (base 100 rupees)
     bet_amount_per_strategy = base_bet_amount  # Always ₹100
     
     # Check: Ensure sufficient balance in main wallet
     if current_balance < bet_amount_per_strategy:
-        print(f"⚠️  Bet BLOCKED: Insufficient balance (₹{current_balance:.2f} < ₹{bet_amount_per_strategy:.2f}).")
-        return None  # Return None if insufficient balance
+        print(f"⚠️  Bet BLOCKED: Insufficient balance (₹{current_balance:.2f} < ₹{bet_amount_per_strategy:.2f}). Recording decision.")
+        
+        # Save record for min_range strategy (bet NOT placed due to insufficient balance)
+        min_range_bet = {
+            'timestamp': timestamp,
+            'bet_type': 'min_range',
+            'bet_placed': False,  # FLAG: Bet was NOT placed (insufficient balance)
+            'predicted_range': pred_range,
+            'pred_min': round(pred_min, 2),
+            'pred_max': round(pred_max, 2),
+            'predicted_value': round(predicted_value, 2),
+            'actual_multiplier': round(actual_multiplier, 2),
+            'bet_amount': 0.0,
+            'payout': 0.0,
+            'profit_loss': 0.0,
+            'balance_before': round(wallet_balance_before, 2),
+            'balance_after': round(wallet_balance_before, 2),
+            'is_win': False,
+            'confidence': confidence
+        }
+        min_range_bets.append(min_range_bet)
+        betting_history.append(min_range_bet)
+        append_bet_to_csv(min_range_bet)
+        
+        last_bet_timestamp = timestamp
+        return {
+            'timestamp': timestamp,
+            'min_range_bet': min_range_bet,
+            'prediction_bet': None,
+            'total_profit_loss': 0.0
+        }
     
     # RULE 2: At this point, pred_min > 2.0 and balance is sufficient - proceed with bet
     print(f"✅ RULE 2: Bet PLACED - pred_min ({pred_min:.2f}x) > 2.0x. Proceeding with bet and profit/loss calculation.")
@@ -1116,34 +1203,24 @@ def simulate_bet(prediction_data, actual_multiplier):
     # This will apply RULE 3 (WIN: Profit = pred_min × 100) or RULE 4 (LOSS: Loss = 100)
     min_range_result = simulate_bet_min_range(pred_min, actual_multiplier, bet_amount_per_strategy, current_balance)
     
-    # Update min_range_balance for tracking (but main wallet is current_balance)
-    min_range_balance = min_range_result['balance_after']
+    # Update current_balance (main wallet) based on min_range result
+    current_balance = min_range_result['balance_after']
+    min_range_balance = current_balance  # Keep in sync
     
-    # Simulate bet based on prediction value
+    # Simulate bet based on prediction value (separate strategy with separate balance)
     prediction_result = None
     if prediction_balance >= bet_amount_per_strategy:
         prediction_result = simulate_bet_prediction(predicted_value, actual_multiplier, bet_amount_per_strategy, prediction_balance)
         prediction_balance = prediction_result['balance_after']
     
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
     min_range_bet = None
     prediction_bet = None
     
-    # Update wallet balance based on profit/loss from minimum range bets
-    # This is the main wallet that tracks P/L from minimum range strategy
-    # Note: min_range_result is guaranteed to exist here because we checked pred_min > 2.0 above
+    # Record minimum range bet (bet WAS placed)
     if min_range_result:
-        # Store balance before bet for record keeping
-        wallet_balance_before = current_balance
-        
         # Get profit/loss amount (net change) and payout
         profit_loss_amount = min_range_result['profit_loss']
         payout_amount = min_range_result.get('payout', 0)
-        
-        # Update wallet balance: Use the balance_after from simulate_bet_min_range
-        # This already accounts for: deduct bet, then add return if win
-        current_balance = min_range_result['balance_after']
         
         # Log the result with clear rule indication
         net_change = current_balance - wallet_balance_before
@@ -1154,24 +1231,22 @@ def simulate_bet(prediction_data, actual_multiplier):
             # RULE 4: LOSS → Loss = 100
             print(f"❌ RULE 4 (LOSS): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Loss=₹{abs(profit_loss_amount):.2f}, Net Change=₹{net_change:.2f}, Balance: ₹{wallet_balance_before:.2f} → ₹{current_balance:.2f}")
         
-        # Record minimum range bet (only if bet was placed, which it was since we passed the pred_min > 2.0 check)
-        # Calculate profit based on minimum range value (pred_min), not actual multiplier
-        calculated_profit = min_range_result['profit_loss']  # Net change (payout - bet)
-        
         min_range_bet = {
             'timestamp': timestamp,
-            'bet_amount': round(bet_amount_per_strategy, 2),
             'bet_type': 'min_range',
-            'bet_placed': True,
-            'predicted_value': round(pred_min, 2),  # Minimum range value
-            'actual_multiplier': round(actual_multiplier, 2),  # Actual outcome (for reference only, NOT used for profit)
+            'bet_placed': True,  # FLAG: Bet WAS placed
+            'predicted_range': pred_range,
+            'pred_min': round(pred_min, 2),
+            'pred_max': round(pred_max, 2),
+            'predicted_value': round(pred_min, 2),  # Minimum range value used for betting
+            'actual_multiplier': round(actual_multiplier, 2),
+            'bet_amount': round(bet_amount_per_strategy, 2),
             'payout': round(payout_amount, 2),       # Total return when win (0 when loss)
-            'profit_loss': calculated_profit,        # Net change (added/subtracted to wallet)
+            'profit_loss': round(profit_loss_amount, 2),  # Net change (added/subtracted to wallet)
             'balance_before': round(wallet_balance_before, 2),  # Wallet balance before bet
-            'balance_after': round(current_balance, 2),  # Wallet balance after bet (updated above)
+            'balance_after': round(current_balance, 2),  # Wallet balance after bet
             'is_win': min_range_result['is_win'],
-            'confidence': prediction_data.get('confidence', 0),
-            'profit_based_on': 'min_range_value'  # Explicitly indicate profit is based on minimum range, not actual
+            'confidence': confidence
         }
         min_range_bets.append(min_range_bet)
         betting_history.append(min_range_bet)
@@ -1179,20 +1254,22 @@ def simulate_bet(prediction_data, actual_multiplier):
     
     # Record prediction value bet (optional - separate strategy)
     if prediction_result:
-        balance_before_pred = prediction_balance - prediction_result['profit_loss']
         prediction_bet = {
             'timestamp': timestamp,
-            'bet_amount': round(bet_amount_per_strategy, 2),
             'bet_type': 'prediction',
-            'bet_placed': True,
+            'bet_placed': True,  # FLAG: Bet WAS placed
+            'predicted_range': pred_range,
+            'pred_min': round(pred_min, 2),
+            'pred_max': round(pred_max, 2),
             'predicted_value': round(predicted_value, 2),
             'actual_multiplier': round(actual_multiplier, 2),
+            'bet_amount': round(bet_amount_per_strategy, 2),
             'payout': round(prediction_result.get('payout', 0), 2),
-            'profit_loss': prediction_result['profit_loss'],
-            'balance_before': round(balance_before_pred, 2),
-            'balance_after': prediction_result['balance_after'],
+            'profit_loss': round(prediction_result['profit_loss'], 2),
+            'balance_before': round(prediction_balance_before, 2),
+            'balance_after': round(prediction_result['balance_after'], 2),
             'is_win': prediction_result['is_win'],
-            'confidence': prediction_data.get('confidence', 0)
+            'confidence': confidence
         }
         prediction_bets.append(prediction_bet)
         betting_history.append(prediction_bet)
@@ -1200,11 +1277,7 @@ def simulate_bet(prediction_data, actual_multiplier):
     
     last_bet_timestamp = timestamp
     
-    # Return combined result (only if at least one bet was placed)
-    # Since we already checked pred_min > 2.0, min_range_bet should exist
-    if min_range_bet is None:
-        return None  # Safety check - should not happen if logic is correct
-    
+    # Return combined result
     return {
         'timestamp': timestamp,
         'min_range_bet': min_range_bet,
