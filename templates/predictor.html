@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -51,7 +52,7 @@
 
         button {
             flex: 1;
-            min-width: 150px;
+            max-width: 150px;
             padding: 15px 25px;
             border: none;
             border-radius: 10px;
@@ -165,8 +166,13 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         .error {
@@ -217,6 +223,19 @@
             font-weight: bold;
         }
 
+        .nav-icon {
+            transition: all 0.2s ease;
+        }
+
+        .nav-icon:hover {
+            opacity: 0.7;
+            transform: scale(1.2);
+        }
+
+        .nav-icon:active {
+            transform: scale(0.9);
+        }
+
         .win-badge {
             background: #38ef7d;
             color: white;
@@ -232,20 +251,29 @@
             border-radius: 5px;
             font-size: 11px;
         }
+
+        /* Always keep P&L card visible */
+        #bettingCard {
+            display: block !important;
+            visibility: visible !important;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🎯 Aviator Multiplier Predictor</h1>
         <p class="subtitle">Machine Learning Prediction System - Auto-Sync Enabled</p>
-        
+
         <div style="background: #e8f5e9; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-            <strong>🔄 Auto-Sync Active:</strong> Model retrains and predictions update automatically when new data arrives
+            <strong>🔄 Auto-Sync Active:</strong> Model retrains and predictions update automatically when new data
+            arrives
         </div>
 
         <div class="button-group">
             <button class="btn-primary" onclick="loadCSV()">📊 Load CSV Data</button>
-            <button class="btn-success" onclick="trainModel()">🤖 Train Model</button>
+            <button class="btn-success" onclick="trainH2OModel()"
+                style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">🤖 Train H2O AutoML</button>
             <button class="btn-warning" onclick="predictNext()">🔮 Predict Next</button>
         </div>
 
@@ -261,20 +289,36 @@
             <div class="stat-grid" id="statGrid"></div>
         </div>
 
-        <div class="info-card" id="modelInfo" style="display: none;">
-            <h3>🤖 Model Information</h3>
-            <div class="stat-grid" id="modelGrid"></div>
+        <div class="info-card" id="h2oModelInfo" style="display: none;">
+            <h3>🤖 H2O AutoML Model Information</h3>
+            <div class="stat-grid" id="h2oModelGrid"></div>
         </div>
 
-        <div class="prediction-card" id="predictionCard" style="display: none;">
-            <h2>🎯 Next Multiplier Prediction</h2>
-            <div class="prediction-value" id="predictionValue"></div>
-            <div class="confidence" id="confidence"></div>
-            <div id="predictionRange" style="margin-top: 10px; font-size: 16px; opacity: 0.9;"></div>
-            <div style="margin-top: 20px;">
-                <p>Last Actual: <strong id="lastActual"></strong></p>
-                <p>Trend: <strong id="trend"></strong></p>
-                <p style="font-size: 12px; opacity: 0.8; margin-top: 10px;">Data Points Used: <strong id="dataPoints"></strong></p>
+        <div class="prediction-card" id="h2oPredictionCard"
+            style="display: none; background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,0.25); padding: 20px;">
+            <h2 style="color: white; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; font-size: 20px;">
+                🤖 H2O AutoML Prediction (Best Model)
+            </h2>
+            <div class="prediction-value" id="h2oPredictionValue" style="color: white; font-size: 40px; font-weight: 800; letter-spacing: -0.5px;"></div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 10px;">
+                <div style="background: rgba(255,255,255,0.15); padding: 10px 12px; border-radius: 8px; color: white; font-size: 13px; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="opacity: 0.8;">Confidence</span>
+                    <strong id="h2oConfidence" style="font-size: 16px;"></strong>
+                </div>
+                <div style="background: rgba(255,255,255,0.15); padding: 10px 12px; border-radius: 8px; color: white; font-size: 13px; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="opacity: 0.8;">Range</span>
+                    <strong id="h2oPredictionRange" style="font-size: 16px;"></strong>
+                </div>
+                <div style="background: rgba(255,255,255,0.15); padding: 10px 12px; border-radius: 8px; color: white; font-size: 13px; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="opacity: 0.8;">Last Actual</span>
+                    <strong id="h2oLastActual" style="font-size: 16px;"></strong>
+                </div>
+            </div>
+
+            <div style="margin-top: 14px; color: white; display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; text-align: center;">
+                <span style="font-size: 14px;">Profit/Loss: <strong id="h2oProfitLoss" style="font-size: 18px;"></strong></span>
+                <span style="font-size: 12px; opacity: 0.85;">Data Points Used: <strong id="h2oDataPoints"></strong></span>
             </div>
         </div>
 
@@ -282,45 +326,102 @@
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <div>
                     <h3>💰 Profit & Loss Tracking</h3>
-                    <p style="font-size: 12px; opacity: 0.7; margin-top: 5px;">Starting Balance: ₹50,000 | Bet Amount: ₹100 per strategy</p>
                 </div>
-                <button onclick="resetBetting()" style="padding: 8px 15px; background: #f5576c; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px;">Reset</button>
+                <button onclick="resetBetting()"
+                    style="padding: 8px 15px; background: #f5576c; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px;">Reset</button>
             </div>
-            
-            <!-- Min Range Betting Box - Main Strategy -->
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px; color: white;">
-                <h3 style="margin-top: 0; color: white;">📊 Profit & Loss Based on Predicted Range Minimum Value</h3>
-                <p style="font-size: 12px; opacity: 0.9; margin-top: 5px;">Betting Strategy: Win if Actual Multiplier ≥ Predicted Minimum Range Value</p>
-                <div class="stat-grid" id="minRangeGrid"></div>
+
+            <!-- H2O AutoML Min Range Betting Box -->
+            <div
+                style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px; color: white;">
+                <h3 style="margin-top: 0; color: white;">🤖 Profit & Loss Based on Predicted Range Minimum Value (H2O
+                    AutoML)</h3>
+                <p style="font-size: 12px; opacity: 0.9; margin-top: 5px;">Betting Strategy: Win if Actual Multiplier ≥
+                    Predicted Minimum Range Value</p>
+                <div class="stat-grid" id="h2oMinRangeGrid"></div>
             </div>
-            
-            <h3 style="margin-top: 20px;">Last 10 Predictions</h3>
-            <table class="data-table" id="predictionHistoryTable" style="margin-top: 10px; margin-bottom: 20px;">
+
+            <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        ">
+                <h3 style="
+             margin: 0;
+             display: inline-flex;
+             align-items: center;
+             gap: 8px;
+         ">
+                    Profit/Loss History:-
+                    <span id="profitLossPaginationInfo" style="
+                       font-size: 14px;
+                       color: #666;
+                       font-weight: normal;
+                       white-space: nowrap;
+                   ">
+                        <!-- dynamic value comes here -->
+                    </span>
+                </h3>
+
+
+                <button onclick="downloadProfitLossHistory()" style="
+                    padding: 8px 5px;   /* Vertical | Horizontal */
+                    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    font-weight: bold;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 5px;
+                    white-space: nowrap; /* Prevent text wrap */
+                " title="Download history">
+                    📥 Download History
+                </button>
+            </div>
+            <table class="data-table" id="profitLossTable" style="margin-top: 10px; margin-bottom: 20px;">
                 <thead>
                     <tr>
                         <th>Time</th>
-                        <th>Predicted Value</th>
-                        <th>Prediction Range</th>
-                        <th>Confidence</th>
-                        <th>Last Actual</th>
-                        <th>Trend</th>
+                        <th>Min Predicted Value</th>
+                        <th>Actual Outcome</th>
+                        <th>Profit/Loss</th>
+                        <th>Balance</th>
+                        <th>Result</th>
                     </tr>
                 </thead>
-                <tbody id="predictionHistoryTableBody"></tbody>
+                <tbody id="profitLossTableBody"></tbody>
             </table>
-            
-            <h3 style="margin-top: 20px;">Recent Bets - Based on Predicted Range Minimum Value</h3>
-            <table class="data-table" id="bettingTable" style="margin-top: 10px;">
+
+            <h3 style="
+            margin: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        ">
+                All Bets - Based on Min. Predicted Range:-
+                <span id="bettingPaginationInfo" style="
+                      font-size: 14px;
+                      color: #666;
+                      font-weight: normal;
+                      white-space: nowrap;
+                  ">
+                    <!-- dynamic value comes here -->
+                </span>
+            </h3>
+            <table class="data-table" id="bettingTable" style="margin-top: 10px; margin-bottom: 20px;">
                 <thead>
                     <tr>
                         <th>Time</th>
-                        <th>Type</th>
-                        <th>Bet Placed</th>
-                        <th>Bet (₹)</th>
-                        <th>Predicted Min Range</th>
-                        <th>Actual</th>
+                        <th>Bet Place</th>
+                        <th>Predicted Min Range Val</th>
+                        <th>Actual Outcome</th>
                         <th>P/L (₹)</th>
-                        <th>Balance (₹)</th>
+                        <th>Balance</th>
                         <th>Result</th>
                     </tr>
                 </thead>
@@ -347,7 +448,7 @@
             try {
                 const response = await fetch('/api/load_csv');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     // Show statistics
                     const statGrid = document.getElementById('statGrid');
@@ -382,23 +483,22 @@
             showLoading(false);
         }
 
-        async function trainModel() {
+
+        async function trainH2OModel() {
             showLoading(true);
             try {
-                const response = await fetch('/api/train', { method: 'POST' });
+                const response = await fetch('/api/train_h2o', { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    const modelGrid = document.getElementById('modelGrid');
-                    modelGrid.innerHTML = `
+                    const h2oModelGrid = document.getElementById('h2oModelGrid');
+                    h2oModelGrid.innerHTML = `
+                  
                         <div class="stat-item">
-                            <div class="stat-label">Mean Absolute Error</div>
-                            <div class="stat-value">${data.accuracy.mae}</div>
+                            <div class="stat-label">R² Score</div>
+                            <div class="stat-value">${data.accuracy.r2_score || 'N/A'}</div>
                         </div>
-                        <div class="stat-item">
-                            <div class="stat-label">RMSE</div>
-                            <div class="stat-value">${data.accuracy.rmse}</div>
-                        </div>
+                      
                         <div class="stat-item">
                             <div class="stat-label">Training Samples</div>
                             <div class="stat-value">${data.accuracy.samples_trained}</div>
@@ -408,7 +508,7 @@
                             <div class="stat-value">${data.accuracy.samples_tested}</div>
                         </div>
                     `;
-                    document.getElementById('modelInfo').style.display = 'block';
+                    document.getElementById('h2oModelInfo').style.display = 'block';
                     showMessage(data.message, 'success');
                 } else {
                     showMessage(`❌ ${data.message}`, 'error');
@@ -424,18 +524,25 @@
             try {
                 const response = await fetch('/api/predict');
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    document.getElementById('predictionValue').textContent = 
+                    // Update H2O prediction card
+                    document.getElementById('h2oPredictionValue').textContent =
                         `${data.prediction.predicted_multiplier}x`;
-                    document.getElementById('confidence').textContent = 
+                    document.getElementById('h2oConfidence').textContent =
                         `Confidence: ${data.prediction.confidence}%`;
-                    document.getElementById('lastActual').textContent = 
+                    document.getElementById('h2oLastActual').textContent =
                         `${data.prediction.last_actual}x`;
-                    document.getElementById('trend').textContent = 
-                        data.prediction.trend;
-                    document.getElementById('predictionCard').style.display = 'block';
-                    showMessage('✅ Prediction generated successfully!', 'success');
+                    if (data.prediction.prediction_range) {
+                        document.getElementById('h2oPredictionRange').textContent =
+                            `Range: ${data.prediction.prediction_range}x`;
+                    }
+                    if (data.prediction.data_points_used) {
+                        document.getElementById('h2oDataPoints').textContent =
+                            data.prediction.data_points_used;
+                    }
+                    document.getElementById('h2oPredictionCard').style.display = 'block';
+                    showMessage('✅ H2O AutoML prediction generated successfully!', 'success');
                 } else {
                     showMessage(`❌ ${data.error}`, 'error');
                 }
@@ -452,60 +559,9 @@
             try {
                 const response = await fetch('/api/status');
                 const data = await response.json();
-                
-                // Update prediction if available
-                if (data.current_prediction) {
-                    document.getElementById('predictionValue').textContent = 
-                        `${data.current_prediction.predicted_multiplier}x`;
-                    document.getElementById('confidence').textContent = 
-                        `Confidence: ${data.current_prediction.confidence}%`;
-                    document.getElementById('lastActual').textContent = 
-                        `${data.current_prediction.last_actual}x`;
-                    document.getElementById('trend').textContent = 
-                        data.current_prediction.trend;
-                    if (data.current_prediction.prediction_range) {
-                        document.getElementById('predictionRange').textContent = 
-                            `Range: ${data.current_prediction.prediction_range}x`;
-                    }
-                    if (data.current_prediction.data_points_used) {
-                        document.getElementById('dataPoints').textContent = 
-                            data.current_prediction.data_points_used;
-                    }
-                    document.getElementById('predictionCard').style.display = 'block';
-                }
-                
-                // Update model info if trained
-                    if (data.model_trained && data.model_accuracy) {
-                    const modelGrid = document.getElementById('modelGrid');
-                    modelGrid.innerHTML = `
-                        <div class="stat-item">
-                            <div class="stat-label">Mean Absolute Error</div>
-                            <div class="stat-value">${data.model_accuracy.mae}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">RMSE</div>
-                            <div class="stat-value">${data.model_accuracy.rmse}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">R² Score</div>
-                            <div class="stat-value">${data.model_accuracy.r2_score || 'N/A'}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Training Samples</div>
-                            <div class="stat-value">${data.model_accuracy.samples_trained}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Total Records</div>
-                            <div class="stat-value">${data.model_accuracy.total_records || 'N/A'}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Trained At</div>
-                            <div class="stat-value" style="font-size: 12px;">${data.model_accuracy.trained_at || 'N/A'}</div>
-                        </div>
-                    `;
-                    document.getElementById('modelInfo').style.display = 'block';
-                }
-                
+
+                // Update prediction history (H2O only)
+
                 // Update CSV info
                 if (data.csv_records > 0) {
                     const statGrid = document.getElementById('statGrid');
@@ -519,10 +575,116 @@
                 if (data.betting) {
                     updateBettingDisplay(data.betting);
                 }
-                
-                // Update prediction history
-                if (data.prediction_history) {
-                    updatePredictionHistory(data.prediction_history);
+
+                // Update profit/loss history from betting data
+                // Will be updated when betting history is loaded
+
+                // Update H2O AutoML prediction if available (unified from status)
+                if (data.h2o_automl && data.h2o_automl.available) {
+                    // Use unified prediction from status (H2O only now)
+                    if (data.current_prediction) {
+                        const h2oPredictionValue = document.getElementById('h2oPredictionValue');
+                        const h2oConfidence = document.getElementById('h2oConfidence');
+                        const h2oLastActual = document.getElementById('h2oLastActual');
+                        if (h2oPredictionValue) {
+                            h2oPredictionValue.textContent = `${data.current_prediction.predicted_multiplier}x`;
+                        }
+                        if (h2oConfidence) {
+                            h2oConfidence.textContent = `Confidence: ${data.current_prediction.confidence}%`;
+                        }
+                        if (h2oLastActual) {
+                            h2oLastActual.textContent = `${data.current_prediction.last_actual}x`;
+                        }
+                        // Update profit/loss from betting data
+                        if (data.betting && data.betting.h2o_min_range) {
+                            const h2oMinRange = data.betting.h2o_min_range;
+                            const initialBalance = data.betting.max_balance || 50000;
+                            const h2oBalance = h2oMinRange.balance || initialBalance;
+                            const h2oPL = h2oBalance - initialBalance;
+                            const h2oPLClass = h2oPL >= 0 ? 'profit' : 'loss';
+                            const profitLossElement = document.getElementById('h2oProfitLoss');
+                            if (profitLossElement) {
+                                profitLossElement.textContent = `${h2oPL >= 0 ? '+' : ''}₹${h2oPL.toLocaleString('en-IN')}`;
+                                profitLossElement.className = h2oPLClass;
+                                profitLossElement.style.color = h2oPL >= 0 ? '#38ef7d' : '#f5576c';
+                            }
+                        }
+                        const predictionRangeEl = document.getElementById('h2oPredictionRange');
+                        if (data.current_prediction.prediction_range && predictionRangeEl) {
+                            predictionRangeEl.textContent = `Range: ${data.current_prediction.prediction_range}x`;
+                        }
+                        const dataPointsEl = document.getElementById('h2oDataPoints');
+                        if (data.current_prediction.data_points_used && dataPointsEl) {
+                            dataPointsEl.textContent = data.current_prediction.data_points_used;
+                        }
+                        const card = document.getElementById('h2oPredictionCard');
+                        if (card) {
+                            card.style.display = 'block';
+                        }
+                    }
+
+                    // Update profit/loss history from betting data
+                    // Will be updated when betting history is loaded
+
+                    // Update H2O model info if trained (use unified model_accuracy from status)
+                    if (data.model_trained && data.model_accuracy) {
+                        const h2oModelGrid = document.getElementById('h2oModelGrid');
+                        h2oModelGrid.innerHTML = `
+                         
+                            <div class="stat-item">
+                                <div class="stat-label">R² Score</div>
+                                <div class="stat-value">${data.model_accuracy.r2_score || 'N/A'}</div>
+                            </div>
+
+                            <div class="stat-item">
+                                <div class="stat-label">Training Samples</div>
+                                <div class="stat-value">${data.model_accuracy.samples_trained}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">Total Records</div>
+                                <div class="stat-value">${data.model_accuracy.total_records || 'N/A'}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">Trained At</div>
+                                <div class="stat-value" style="font-size: 12px;">${data.model_accuracy.trained_at || 'N/A'}</div>
+                            </div>
+                        `;
+                        document.getElementById('h2oModelInfo').style.display = 'block';
+                    } else if (data.h2o_automl && data.h2o_automl.available && !data.model_trained) {
+                        // Check training status
+                        const trainingStatus = data.h2o_training_status || {};
+                        const isTraining = trainingStatus.in_progress === 1;
+                        const hasEnoughData = trainingStatus.has_enough_data === 1;
+                        const records = data.csv_records || 0;
+
+                        const h2oModelGrid = document.getElementById('h2oModelGrid');
+                        let statusMessage = '';
+                        let statusColor = '#f5576c';
+
+                        if (isTraining) {
+                            statusMessage = `🔄 Training in progress... (started at ${trainingStatus.last_attempt || 'unknown'})`;
+                            statusColor = '#ffa500';
+                        } else if (!hasEnoughData && records < 30) {
+                            statusMessage = `Waiting for training (needs 30+ records, currently: ${records})`;
+                        } else if (hasEnoughData && !isTraining) {
+                            statusMessage = `Ready to train (${records} records available). Click "Train H2O AutoML" button.`;
+                            statusColor = '#38ef7d';
+                        } else {
+                            statusMessage = `Waiting for training (${records} records available)`;
+                        }
+
+                        h2oModelGrid.innerHTML = `
+                            <div class="stat-item" style="grid-column: 1 / -1;">
+                                <div class="stat-label">Status</div>
+                                <div class="stat-value" style="color: ${statusColor};">${statusMessage}</div>
+                            </div>
+                        `;
+                        document.getElementById('h2oModelInfo').style.display = 'block';
+                    }
+                } else {
+                    // H2O not available
+                    document.getElementById('h2oPredictionCard').style.display = 'none';
+                    document.getElementById('h2oModelInfo').style.display = 'none';
                 }
             } catch (error) {
                 console.error('Status check error:', error);
@@ -545,8 +707,19 @@
 
         // Auto-load CSV and start auto-refresh on page load
         window.onload = () => {
+            const bettingCard = document.getElementById('bettingCard');
+            if (bettingCard) {
+                bettingCard.style.display = 'block';
+                bettingCard.style.visibility = 'visible';
+            }
+
+            // Render empty states immediately so the UI is not blank
+            renderProfitLossHistory();
+            renderBettingHistory();
+
             loadCSV();
             checkStatus(); // Initial status check
+            loadBettingHistory(); // Load history right away
             startAutoRefresh(); // Start auto-refresh
         };
 
@@ -555,145 +728,480 @@
             stopAutoRefresh();
         };
 
-        function updatePredictionHistory(predictions) {
-            const tbody = document.getElementById('predictionHistoryTableBody');
-            if (!tbody || !predictions || predictions.length === 0) {
-                if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; opacity: 0.7;">No predictions yet</td></tr>';
+        function updateProfitLossHistory() {
+            // Use betting data for profit/loss history
+            // Filter to only show bets that were actually placed (no "NO BET" entries)
+            // Only show WIN/LOSS results, exclude all "NO BET" entries
+            if (allBettingData && allBettingData.length > 0) {
+                // Filter out entries where bet_placed is false or where result is "NO BET"
+                allProfitLossData = allBettingData.filter(bet => {
+                    const betPlaced = bet.bet_placed === true || bet.bet_placed === 1 || bet.bet_placed === '1' || bet.bet_placed === 'True' || bet.bet_placed === true;
+                    // Also check if it's a valid win/loss (not "NO BET")
+                    const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
+                    const isLoss = bet.is_win === false || bet.is_win === 0 || bet.is_win === '0';
+                    // Only include if bet was placed AND has a win/loss result
+                    return betPlaced && (isWin || isLoss);
+                });
+            } else {
+                allProfitLossData = [];
+            }
+
+            renderProfitLossHistory();
+        }
+
+        function renderProfitLossHistory() {
+            const tbody = document.getElementById('profitLossTableBody');
+            if (!tbody) return;
+
+            if (allProfitLossData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; opacity: 0.7;">No profit/loss data yet</td></tr>';
+                // Hide pagination info
+                const paginationInfo = document.getElementById('profitLossPaginationInfo');
+                if (paginationInfo) {
+                    paginationInfo.textContent = '';
+                }
                 return;
             }
-            
-            // Show most recent first (predictions are already in chronological order, so reverse)
-            const reversedPredictions = [...predictions].reverse();
-            
-            tbody.innerHTML = reversedPredictions.map((pred, index) => {
-                const time = pred.predicted_at || pred.timestamp || 'N/A';
-                const predictedValue = pred.predicted_multiplier || 0;
-                const range = pred.prediction_range || 'N/A';
-                const confidence = pred.confidence || 0;
-                const lastActual = pred.last_actual || 0;
-                const trend = pred.trend || 'N/A';
-                
-                // Color code based on confidence
-                const confidenceClass = confidence >= 70 ? 'profit' : confidence >= 50 ? '' : 'loss';
-                
-                // Highlight the most recent prediction
-                const rowClass = index === 0 ? 'style="background-color: rgba(102, 126, 234, 0.1);"' : '';
-                
-                return `
+
+            // Calculate pagination
+            const totalPages = Math.ceil(allProfitLossData.length / profitLossItemsPerPage);
+            const startIndex = (profitLossCurrentPage - 1) * profitLossItemsPerPage;
+            const endIndex = startIndex + profitLossItemsPerPage;
+            const currentPageData = allProfitLossData.slice(startIndex, endIndex);
+
+            // Update pagination info
+            const paginationInfo = document.getElementById('profitLossPaginationInfo');
+            if (allProfitLossData.length > 10) {
+                paginationInfo.textContent = `Showing ${startIndex + 1}-${Math.min(endIndex, allProfitLossData.length)} of ${allProfitLossData.length} bets (Page ${profitLossCurrentPage} of ${totalPages})`;
+            } else {
+                paginationInfo.textContent = allProfitLossData.length > 0 ? `${allProfitLossData.length} bets` : 'No bets found';
+            }
+
+            // Navigation icons are now embedded in the table after 10th row
+
+            let rowsHtml = '';
+            let displayedCount = 0;
+
+            currentPageData.forEach((bet, index) => {
+                const profitClass = bet.profit_loss >= 0 ? 'profit' : 'loss';
+                // All bets in this list are placed bets with WIN/LOSS (filtered in updateProfitLossHistory)
+                // Double-check to ensure we never show "NO BET"
+                const betPlaced = bet.bet_placed === true || bet.bet_placed === 1 || bet.bet_placed === '1' || bet.bet_placed === 'True';
+                const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
+                const isLoss = bet.is_win === false || bet.is_win === 0 || bet.is_win === '0';
+
+                // Only show if bet was placed and has a win/loss result
+                if (!betPlaced || (!isWin && !isLoss)) {
+                    return; // Skip this entry
+                }
+
+                displayedCount++;
+
+                const resultBadge = isWin
+                    ? '<span class="win-badge">⭐ WIN</span>'
+                    : '<span class="loss-badge">LOSS</span>';
+
+                // Extract min predicted value from predicted_range or use pred_min
+                let minPredicted = 'N/A';
+                if (bet.pred_min) {
+                    minPredicted = `${bet.pred_min.toFixed(2)}x`;
+                } else if (bet.predicted_range) {
+                    const rangeParts = bet.predicted_range.split(' - ');
+                    if (rangeParts.length > 0) {
+                        minPredicted = `${parseFloat(rangeParts[0]).toFixed(2)}x`;
+                    }
+                } else if (bet.predicted_value) {
+                    minPredicted = `${bet.predicted_value.toFixed(2)}x`;
+                }
+
+                // Highlight the most recent record (only on first page)
+                const rowClass = (profitLossCurrentPage === 1 && index === 0) ? 'style="background-color: rgba(102, 126, 234, 0.1);"' : '';
+
+                rowsHtml += `
                     <tr ${rowClass}>
-                        <td>${time}</td>
-                        <td><strong style="color: #667eea;">${predictedValue.toFixed(2)}x</strong></td>
-                        <td><span style="font-family: monospace;">${range}</span></td>
-                        <td class="${confidenceClass}"><strong>${confidence.toFixed(1)}%</strong></td>
-                        <td>${lastActual.toFixed(2)}x</td>
-                        <td>${trend}</td>
+                        <td>${bet.timestamp || 'N/A'}</td>
+                        <td><strong style="color: #667eea;">${minPredicted}</strong></td>
+                        <td>${bet.actual_multiplier || 'N/A'}x</td>
+                        <td class="${profitClass}" style="font-weight: bold; font-size: 15px;">₹${(bet.profit_loss || 0) >= 0 ? '+' : ''}${(bet.profit_loss || 0).toFixed(2)}</td>
+                        <td>₹${(bet.balance_after || bet.balance_before || 0).toLocaleString('en-IN')}</td>
+                        <td>${resultBadge}</td>
                     </tr>
                 `;
-            }).join('');
+            });
+
+            // Add navigation row if there are more than 10 items total
+            // Show after the last displayed item (whether it's 10 or less)
+            if (allProfitLossData.length > 10) {
+                const canGoPrev = profitLossCurrentPage > 1;
+                const canGoNext = profitLossCurrentPage < totalPages;
+                rowsHtml += `
+                    <tr style="background-color: #f8f9fa;">
+                        <td colspan="6" style="text-align: center; padding: 15px;">
+                            <div style="display: flex; justify-content: center; align-items: center; gap: 20px;">
+                                <span onclick="${canGoPrev ? 'previousProfitLossPage()' : ''}" class="nav-icon" style="font-size: 28px; ${canGoPrev ? 'cursor: pointer; color: #667eea;' : 'cursor: not-allowed; color: #ccc; opacity: 0.5;'} user-select: none; font-weight: bold;" title="${canGoPrev ? 'Previous' : 'No previous page'}">◀</span>
+                                <span onclick="${canGoNext ? 'nextProfitLossPage()' : ''}" class="nav-icon" style="font-size: 28px; ${canGoNext ? 'cursor: pointer; color: #667eea;' : 'cursor: not-allowed; color: #ccc; opacity: 0.5;'} user-select: none; font-weight: bold;" title="${canGoNext ? 'Next' : 'No next page'}">▶</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            tbody.innerHTML = rowsHtml;
+        }
+
+        function previousProfitLossPage() {
+            if (profitLossCurrentPage > 1) {
+                profitLossCurrentPage--;
+                renderProfitLossHistory();
+            }
+        }
+
+        function nextProfitLossPage() {
+            const totalPages = Math.ceil(allProfitLossData.length / profitLossItemsPerPage);
+            if (profitLossCurrentPage < totalPages) {
+                profitLossCurrentPage++;
+                renderProfitLossHistory();
+            }
+        }
+
+        function downloadProfitLossHistory() {
+            try {
+                if (!allProfitLossData || allProfitLossData.length === 0) {
+                    alert('No profit/loss data available to download');
+                    return;
+                }
+
+                // Prepare CSV data
+                const headers = ['Time', 'Min Predicted Value', 'Actual Outcome', 'Profit/Loss (₹)', 'Balance (₹)', 'Result'];
+                const rows = allProfitLossData.map(bet => {
+                    // Extract min predicted value
+                    let minPredicted = 'N/A';
+                    if (bet.pred_min) {
+                        minPredicted = `${bet.pred_min.toFixed(2)}x`;
+                    } else if (bet.predicted_range) {
+                        const rangeParts = bet.predicted_range.split(' - ');
+                        if (rangeParts.length > 0) {
+                            minPredicted = `${parseFloat(rangeParts[0]).toFixed(2)}x`;
+                        }
+                    } else if (bet.predicted_value) {
+                        minPredicted = `${bet.predicted_value.toFixed(2)}x`;
+                    }
+
+                    // Determine result
+                    const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
+                    const result = isWin ? 'WIN' : 'LOSS';
+
+                    // Format values
+                    const timestamp = bet.timestamp || 'N/A';
+                    const actual = bet.actual_multiplier ? `${bet.actual_multiplier}x` : 'N/A';
+                    const profitLoss = (bet.profit_loss || 0).toFixed(2);
+                    const balance = (bet.balance_after || bet.balance_before || 0).toFixed(2);
+
+                    return [
+                        timestamp,
+                        minPredicted,
+                        actual,
+                        profitLoss,
+                        balance,
+                        result
+                    ];
+                });
+
+                // Convert to CSV format
+                const csvContent = [
+                    headers.join(','),
+                    ...rows.map(row => row.map(cell => {
+                        // Escape commas and quotes in cell values
+                        const cellStr = String(cell);
+                        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+                            return `"${cellStr.replace(/"/g, '""')}"`;
+                        }
+                        return cellStr;
+                    }).join(','))
+                ].join('\n');
+
+                // Create BOM for Excel UTF-8 support
+                const BOM = '\uFEFF';
+                const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+
+                // Create download link
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+
+                // Generate filename with current date
+                const now = new Date();
+                const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+                const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '');
+                const filename = `profit_loss_history_${dateStr}_${timeStr}.csv`;
+
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Show success message
+                showMessage(`✅ Profit/Loss history downloaded (${allProfitLossData.length} records)`, 'success');
+            } catch (error) {
+                console.error('Error downloading profit/loss history:', error);
+                showMessage('❌ Error downloading profit/loss history', 'error');
+            }
         }
 
         function updateBettingDisplay(betting) {
-            // Min Range Strategy Box
-            const minRangeGrid = document.getElementById('minRangeGrid');
-            const minRange = betting.min_range || {};
-            
-            // Calculate wallet P/L: current_balance - initial_balance (50000)
-            const walletBalance = betting.current_balance || betting.max_balance || 50000;
-            const initialBalance = betting.max_balance || 50000;
-            const walletPL = walletBalance - initialBalance;  // Positive = profit, Negative = loss
-            const walletPLClass = walletPL >= 0 ? 'profit' : 'loss';
-            
-            minRangeGrid.innerHTML = `
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Wallet Balance</div>
-                    <div class="stat-value" style="color: white; font-size: 20px;">₹${walletBalance.toLocaleString('en-IN')}</div>
-                </div>
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Profit/Loss</div>
-                    <div class="stat-value ${walletPLClass}" style="color: white; font-size: 20px; font-weight: bold;">${walletPL >= 0 ? '+' : ''}₹${walletPL.toLocaleString('en-IN')}</div>
-                    <div style="font-size: 11px; opacity: 0.8; margin-top: 3px;">Initial: ₹${initialBalance.toLocaleString('en-IN')}</div>
-                </div>
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Bets</div>
-                    <div class="stat-value" style="color: white;">${minRange.total_bets || 0}</div>
-                </div>
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Wins ⭐</div>
-                    <div class="stat-value" style="color: #38ef7d; font-weight: bold;">${minRange.total_wins || 0}</div>
-                </div>
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Losses</div>
-                    <div class="stat-value" style="color: #f5576c;">${minRange.total_losses || 0}</div>
-                </div>
-                <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
-                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Win Rate</div>
-                    <div class="stat-value" style="color: white;">${minRange.win_rate || 0}%</div>
-                </div>
-            `;
-            
-            document.getElementById('bettingCard').style.display = 'block';
+            // H2O Min Range Strategy Box (only H2O now)
+            const h2oMinRangeGrid = document.getElementById('h2oMinRangeGrid');
+            const h2oMinRange = betting && betting.h2o_min_range ? betting.h2o_min_range : {};
+            const initialBalance = betting && betting.max_balance ? betting.max_balance : 50000;
+            const h2oBalance = h2oMinRange.balance || initialBalance;
+            const h2oPL = h2oBalance - initialBalance;
+            const h2oPLClass = h2oPL >= 0 ? 'profit' : 'loss';
+            const h2oTotalBets = h2oMinRange.total_bets || 0;
+            const h2oTotalWins = h2oMinRange.total_wins || 0;
+            const h2oTotalLosses = h2oMinRange.total_losses || 0;
+            const h2oWinRate = h2oMinRange.win_rate || 0;
+
+            if (h2oMinRangeGrid) {
+                h2oMinRangeGrid.innerHTML = `
+                    <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
+                        <div class="stat-label" style="color: rgba(255,255,255,0.9);">Wallet Balance</div>
+                        <div class="stat-value" style="color: white; font-size: 20px;">₹${h2oBalance.toLocaleString('en-IN')}</div>
+                    </div>
+                    <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
+                        <div class="stat-label" style="color: rgba(255,255,255,0.9);">Profit/Loss</div>
+                        <div class="stat-value ${h2oPLClass}" style="color: white; font-size: 20px; font-weight: bold;">${h2oPL >= 0 ? '+' : ''}₹${h2oPL.toLocaleString('en-IN')}</div>
+                        <div style="font-size: 11px; opacity: 0.8; margin-top: 3px;">Initial: ₹${initialBalance.toLocaleString('en-IN')}</div>
+                    </div>
+                   <div class="stat-item"
+     style="
+        background: rgba(255,255,255,0.1);
+        padding: 10px;
+        border-radius: 5px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+     ">
+     
+    <div class="stat-label" style="color: rgba(255,255,255,0.9);">
+        TotalBets (Wins / Losses)
+    </div>
+
+    <div class="stat-value" style="color: white; font-weight: bold;">
+        ${h2oTotalBets || 0}
+        <span style="color: #38ef7d;">
+            (${h2oTotalWins || 0}
+        </span>
+        <span style="color: white;"> / </span>
+        <span style="color: #f5576c;">
+            ${h2oTotalLosses || 0})
+        </span>
+    </div>
+</div>
+
+                    <div class="stat-item" style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">
+                        <div class="stat-label" style="color: rgba(255,255,255,0.9);">Win Rate</div>
+                        <div class="stat-value" style="color: white;">${h2oWinRate.toFixed(1)}%</div>
+                    </div>
+                `;
+            }
+
+            const bettingCard = document.getElementById('bettingCard');
+            if (bettingCard) {
+                bettingCard.style.display = 'block';
+                bettingCard.style.visibility = 'visible';
+            }
 
             // Load betting history
             loadBettingHistory();
         }
 
+        // Pagination state for betting history
+        let bettingCurrentPage = 1;
+        const bettingItemsPerPage = 10;
+        let allBettingData = [];
+
+        // Pagination state for profit/loss history
+        let profitLossCurrentPage = 1;
+        const profitLossItemsPerPage = 10;
+        let allProfitLossData = [];
+
         async function loadBettingHistory() {
             try {
                 const response = await fetch('/api/betting_history');
                 const data = await response.json();
-                
-                if (data.success && data.history) {
-                    const tbody = document.getElementById('bettingTableBody');
-                    tbody.innerHTML = '';
-                    
-                    // Combine and sort by timestamp
-                    const allBets = [...(data.min_range_bets || []), ...(data.prediction_bets || [])];
-                    allBets.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                    
-                    allBets.slice(0, 100).forEach(bet => {
-                        const row = document.createElement('tr');
-                        const profitClass = bet.profit_loss >= 0 ? 'profit' : 'loss';
-                        // Handle both bool and int (0/1) for is_win and bet_placed
-                        const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
-                        const betPlaced = bet.bet_placed === true || bet.bet_placed === 1 || bet.bet_placed === '1' || bet.bet_placed === 'True';
-                        
-                        const resultBadge = betPlaced 
-                            ? (isWin
-                                ? '<span class="win-badge">⭐ WIN</span>' 
-                                : '<span class="loss-badge">LOSS</span>')
-                            : '<span style="background: #999; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">NO BET</span>';
-                        
-                        const betPlacedBadge = betPlaced
-                            ? '<span style="background: #38ef7d; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">YES</span>'
-                            : '<span style="background: #f5576c; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">NO</span>';
-                        
-                        const betType = bet.bet_type === 'min_range' 
-                            ? '<span style="background: #667eea; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">Min Range</span>'
-                            : '<span style="background: #f5576c; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">Prediction</span>';
-                        
-                        const predictedDisplay = bet.bet_type === 'min_range' 
-                            ? `<strong style="color: #667eea;">${bet.predicted_value || 'N/A'}x (Min Range)</strong>`
-                            : `${bet.predicted_value || 'N/A'}x (Prediction)`;
-                        
-                        // Show bet amount or "N/A" if no bet placed
-                        const betAmountDisplay = betPlaced ? `₹${(bet.bet_amount || 0).toFixed(2)}` : 'N/A';
-                        
-                        row.innerHTML = `
-                            <td>${bet.timestamp}</td>
-                            <td>${betType}</td>
-                            <td>${betPlacedBadge}</td>
-                            <td>${betAmountDisplay}</td>
-                            <td>${predictedDisplay}</td>
-                            <td>${bet.actual_multiplier || 'N/A'}x</td>
-                            <td class="${profitClass}">₹${(bet.profit_loss || 0) >= 0 ? '+' : ''}${(bet.profit_loss || 0).toFixed(2)}</td>
-                            <td>₹${(bet.balance_after || bet.balance_before || 0).toLocaleString('en-IN')}</td>
-                            <td>${resultBadge}</td>
-                        `;
-                        tbody.appendChild(row);
+
+                console.log('Betting history API response:', data); // Debug log
+
+                // Try to load betting data from multiple possible response formats
+                // Use H2O bets only (Scikit-Learn removed)
+                allBettingData = [...(data.h2o_min_range_bets || [])];
+
+                // If no h2o_min_range_bets at root, try other possible fields
+                if (allBettingData.length === 0 && data.betting && data.betting.h2o_min_range_bets) {
+                    allBettingData = [...data.betting.h2o_min_range_bets];
+                }
+
+                // Also try history field
+                if (allBettingData.length === 0 && data.history && Array.isArray(data.history)) {
+                    allBettingData = [...data.history];
+                }
+
+                // Sort by timestamp (most recent first)
+                if (allBettingData.length > 0) {
+                    allBettingData.sort((a, b) => {
+                        const dateA = new Date(a.timestamp || 0);
+                        const dateB = new Date(b.timestamp || 0);
+                        return dateB - dateA;
                     });
                 }
+
+                console.log('Loaded betting data:', allBettingData.length, 'bets'); // Debug log
+
+                // Always show betting card
+                const bettingCard = document.getElementById('bettingCard');
+                if (bettingCard) {
+                    bettingCard.style.display = 'block';
+                    bettingCard.style.visibility = 'visible';
+                }
+
+                renderBettingHistory();
+
+                // Update profit/loss history with new betting data
+                updateProfitLossHistory();
             } catch (error) {
                 console.error('Error loading betting history:', error);
+                // Still render empty state
+                allBettingData = [];
+                renderBettingHistory();
+                const bettingCard = document.getElementById('bettingCard');
+                if (bettingCard) {
+                    bettingCard.style.display = 'block';
+                    bettingCard.style.visibility = 'visible';
+                }
+            }
+        }
+
+        function renderBettingHistory() {
+            const tbody = document.getElementById('bettingTableBody');
+            if (!tbody) {
+                console.error('bettingTableBody element not found');
+                return;
+            }
+
+            tbody.innerHTML = '';
+
+            // Check if we have data
+            if (!allBettingData || allBettingData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; opacity: 0.7;">No bets found</td></tr>';
+                const paginationInfo = document.getElementById('bettingPaginationInfo');
+                if (paginationInfo) {
+                    paginationInfo.textContent = 'No bets found';
+                }
+                return;
+            }
+
+            const totalPages = Math.ceil(allBettingData.length / bettingItemsPerPage);
+            const startIndex = (bettingCurrentPage - 1) * bettingItemsPerPage;
+            const endIndex = startIndex + bettingItemsPerPage;
+            const currentPageBets = allBettingData.slice(startIndex, endIndex);
+
+            // Update pagination info
+            const paginationInfo = document.getElementById('bettingPaginationInfo');
+            if (paginationInfo) {
+                if (allBettingData.length > 10) {
+                    paginationInfo.textContent = `Showing ${startIndex + 1}-${Math.min(endIndex, allBettingData.length)} of ${allBettingData.length} bets (Page ${bettingCurrentPage} of ${totalPages})`;
+                } else {
+                    paginationInfo.textContent = allBettingData.length > 0 ? `${allBettingData.length} bets` : 'No bets found';
+                }
+            }
+
+            // Navigation icons are now embedded in the table after 10th row
+
+            if (currentPageBets.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; opacity: 0.7;">No bets on this page</td></tr>';
+                return;
+            }
+
+            let rowsHtml = '';
+            let displayedCount = 0;
+
+            currentPageBets.forEach((bet, index) => {
+                const profitClass = bet.profit_loss >= 0 ? 'profit' : 'loss';
+                // Handle both bool and int (0/1) for is_win and bet_placed
+                const isWin = bet.is_win === true || bet.is_win === 1 || bet.is_win === '1';
+                const betPlaced = bet.bet_placed === true || bet.bet_placed === 1 || bet.bet_placed === '1' || bet.bet_placed === 'True';
+
+                const resultBadge = betPlaced
+                    ? (isWin
+                        ? '<span class="win-badge">⭐ WIN</span>'
+                        : '<span class="loss-badge">LOSS</span>')
+                    : '<span style="background: #999; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px;">NO BET</span>';
+
+                const betPlacedBadge = betPlaced
+                    ? '<span style="background: #38ef7d; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">YES</span>'
+                    : '<span style="background: #f5576c; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;">NO</span>';
+
+                // Extract min predicted value from predicted_range or use pred_min
+                let minPredicted = 'N/A';
+                if (bet.pred_min) {
+                    minPredicted = `${bet.pred_min.toFixed(2)}x`;
+                } else if (bet.predicted_range) {
+                    const rangeParts = bet.predicted_range.split(' - ');
+                    if (rangeParts.length > 0) {
+                        minPredicted = `${parseFloat(rangeParts[0]).toFixed(2)}x`;
+                    }
+                } else if (bet.predicted_value) {
+                    minPredicted = `${bet.predicted_value.toFixed(2)}x`;
+                }
+
+                displayedCount++;
+
+                rowsHtml += `
+                    <tr>
+                        <td>${bet.timestamp}</td>
+                        <td>${betPlacedBadge}</td>
+                        <td><strong style="color: #667eea;">${minPredicted}</strong></td>
+                        <td>${bet.actual_multiplier || 'N/A'}x</td>
+                        <td class="${profitClass}" style="font-weight: bold; font-size: 15px;">₹${(bet.profit_loss || 0) >= 0 ? '+' : ''}${(bet.profit_loss || 0).toFixed(2)}</td>
+                        <td>₹${(bet.balance_after || bet.balance_before || 0).toLocaleString('en-IN')}</td>
+                        <td>${resultBadge}</td>
+                    </tr>
+                `;
+            });
+
+            // Add navigation row if there are more than 10 items total
+            // Show after the last displayed item (whether it's 10 or less)
+            if (allBettingData.length > 10) {
+                const canGoPrev = bettingCurrentPage > 1;
+                const canGoNext = bettingCurrentPage < totalPages;
+                rowsHtml += `
+                    <tr style="background-color: #f8f9fa;">
+                        <td colspan="7" style="text-align: center; padding: 15px;">
+                            <div style="display: flex; justify-content: center; align-items: center; gap: 20px;">
+                                <span onclick="${canGoPrev ? 'previousBettingPage()' : ''}" class="nav-icon" style="font-size: 28px; ${canGoPrev ? 'cursor: pointer; color: #667eea;' : 'cursor: not-allowed; color: #ccc; opacity: 0.5;'} user-select: none; font-weight: bold;" title="${canGoPrev ? 'Previous' : 'No previous page'}">◀</span>
+                                <span onclick="${canGoNext ? 'nextBettingPage()' : ''}" class="nav-icon" style="font-size: 28px; ${canGoNext ? 'cursor: pointer; color: #667eea;' : 'cursor: not-allowed; color: #ccc; opacity: 0.5;'} user-select: none; font-weight: bold;" title="${canGoNext ? 'Next' : 'No next page'}">▶</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            tbody.innerHTML = rowsHtml;
+        }
+
+        function previousBettingPage() {
+            if (bettingCurrentPage > 1) {
+                bettingCurrentPage--;
+                renderBettingHistory();
+            }
+        }
+
+        function nextBettingPage() {
+            const totalPages = Math.ceil(allBettingData.length / bettingItemsPerPage);
+            if (bettingCurrentPage < totalPages) {
+                bettingCurrentPage++;
+                renderBettingHistory();
             }
         }
 
@@ -701,11 +1209,11 @@
             if (!confirm('Are you sure you want to reset betting simulation? This will clear all history.')) {
                 return;
             }
-            
+
             try {
                 const response = await fetch('/api/reset_betting', { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     showMessage('✅ Betting simulation reset successfully', 'success');
                     checkStatus(); // Refresh status
@@ -717,4 +1225,5 @@
         }
     </script>
 </body>
+
 </html>
