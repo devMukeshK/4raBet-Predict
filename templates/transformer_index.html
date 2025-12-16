@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual Model Aviator Predictor - H2O + Bayesian</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 1600px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 40px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #1e3c72;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .status-banner {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+
+        .status-banner.running {
+            background: #c8e6c9;
+        }
+
+        .status-banner.not-trained {
+            background: #ffecb3;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 150px;
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: white;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+
+        .btn-success:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .btn-info:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 15px 30px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .approaches-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .approach-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            padding: 25px;
+            border-left: 5px solid;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .approach-card.h2o {
+            border-left-color: #667eea;
+        }
+
+        .approach-card.bayesian {
+            border-left-color: #f5576c;
+        }
+
+        .approach-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
+        .prediction-display {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .prediction-value {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 15px 0;
+            color: #667eea;
+        }
+
+        .prediction-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            color: #333;
+            font-weight: bold;
+            font-size: 1.3em;
+        }
+
+        .betting-action {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-top: 15px;
+        }
+
+        .action-bet {
+            background: #4caf50;
+            color: white;
+        }
+
+        .action-small-bet {
+            background: #ff9800;
+            color: white;
+        }
+
+        .action-no-bet {
+            background: #f44336;
+            color: white;
+        }
+
+        .risk-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .risk-low {
+            background: #4caf50;
+            color: white;
+        }
+
+        .risk-medium {
+            background: #ff9800;
+            color: white;
+        }
+
+        .risk-high {
+            background: #f44336;
+            color: white;
+        }
+
+        .simulation-results {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .simulation-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .simulation-card h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-label {
+            color: #666;
+        }
+
+        .result-value {
+            color: #333;
+            font-weight: bold;
+        }
+
+        .result-value.positive {
+            color: #4caf50;
+        }
+
+        .result-value.negative {
+            color: #f44336;
+        }
+
+        .bayesian-info {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .message.success {
+            background: #c8e6c9;
+            color: #2e7d32;
+            display: block;
+        }
+
+        .message.error {
+            background: #ffcdd2;
+            color: #c62828;
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .approaches-grid, .simulation-results {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Dual Model Aviator Predictor</h1>
+            <p class="subtitle">H2O Binary Classification + Bayesian Sequence Model</p>
+        </div>
+        
+        <div class="status-banner" id="statusBanner">
+            <span id="statusText">Initializing...</span>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-primary" onclick="trainModel('h2o')" id="trainBtn">🤖 Train H2O Model</button>
+            <button class="btn-info" onclick="runSimulation()" id="simulateBtn">📈 Run Simulation</button>
+            <button class="btn-success" onclick="startMonitoring()" id="startBtn" disabled>▶️ Start Monitoring</button>
+            <button class="btn-warning" onclick="stopMonitoring()" id="stopBtn" disabled>⏸️ Stop Monitoring</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing...</p>
+        </div>
+
+        <div class="message" id="message"></div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('predictions')">📊 Live Predictions</button>
+            <button class="tab" onclick="switchTab('simulations')">📈 Simulation Results</button>
+            <button class="tab" onclick="switchTab('stats')">💰 Betting Stats</button>
+        </div>
+
+        <!-- Predictions Tab -->
+        <div id="predictionsTab" class="tab-content active">
+            <div class="approaches-grid">
+                <!-- H2O Binary Classification -->
+                <div class="approach-card h2o">
+                    <h3>🎯 H2O Binary Classification</h3>
+                    <div class="metric-card">
+                        <div class="metric-label">Model Status</div>
+                        <div class="metric-value" id="h2oStatus">-</div>
+                    </div>
+                    <div class="prediction-display" id="h2oPrediction" style="display: none;">
+                        <div class="prediction-label">Probability of >2.0x</div>
+                        <div class="prediction-value" id="h2oProb">-</div>
+                        <div id="h2oAction" class="betting-action" style="display: none;"></div>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-label">AUC</div>
+                                <div class="metric-value" id="h2oAUC">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Confidence</div>
+                                <div class="metric-value" id="h2oConfidence">-</div>
+                            </div>
+                        </div>
+                        <div class="prediction-label">
+                            Risk: <span id="h2oRiskBadge" class="risk-badge">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bayesian Sequence Model -->
+                <div class="approach-card bayesian">
+                    <h3>🧠 Bayesian Sequence Model</h3>
+                    <div class="metric-card">
+                        <div class="metric-label">Model Status</div>
+                        <div class="metric-value">✅ Always Available</div>
+                    </div>
+                    <div class="prediction-display" id="bayesianPrediction" style="display: none;">
+                        <div class="prediction-label">Probability of >2.0x</div>
+                        <div class="prediction-value" id="bayesianProb">-</div>
+                        <div id="bayesianAction" class="betting-action" style="display: none;"></div>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-label">Confidence</div>
+                                <div class="metric-value" id="bayesianConfidence">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Alpha</div>
+                                <div class="metric-value" id="bayesianAlpha">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Beta</div>
+                                <div class="metric-value" id="bayesianBeta">-</div>
+                            </div>
+                        </div>
+                        <div class="prediction-label">
+                            Risk: <span id="bayesianRiskBadge" class="risk-badge">-</span>
+                        </div>
+                        <div class="bayesian-info" id="bayesianReason" style="display: none;">
+                            <strong>Reasoning:</strong> <span id="bayesianReasonText">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Simulation Results Tab -->
+        <div id="simulationsTab" class="tab-content">
+            <div class="simulation-results">
+                <div class="simulation-card">
+                    <h3>📊 H2O Binary Results</h3>
+                    <div id="h2oSimulationResults">
+                        <p style="color: #666; text-align: center; padding: 20px;">No simulation results yet. Click "Run Simulation" to generate results.</p>
+                    </div>
+                </div>
+                <div class="simulation-card">
+                    <h3>🧠 Bayesian Sequence Results</h3>
+                    <div id="bayesianSimulationResults">
+                        <p style="color: #666; text-align: center; padding: 20px;">No simulation results yet. Click "Run Simulation" to generate results.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Betting Stats Tab -->
+        <div id="statsTab" class="tab-content">
+            <div class="approaches-grid">
+                <div class="approach-card h2o">
+                    <h3>💰 H2O Binary Stats</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-label">Bankroll</div>
+                            <div class="metric-value" id="h2oBankroll">₹50,000</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Total Bets</div>
+                            <div class="metric-value" id="h2oTotalBets">0</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Wins/Losses</div>
+                            <div class="metric-value" id="h2oWinsLosses">0/0</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Total P/L</div>
+                            <div class="metric-value" id="h2oPL">₹0.00</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="approach-card bayesian">
+                    <h3>💰 Bayesian Stats</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-label">Bankroll</div>
+                            <div class="metric-value" id="bayesianBankroll">₹50,000</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Total Bets</div>
+                            <div class="metric-value" id="bayesianTotalBets">0</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Wins/Losses</div>
+                            <div class="metric-value" id="bayesianWinsLosses">0/0</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Total P/L</div>
+                            <div class="metric-value" id="bayesianPL">₹0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let isRunning = false;
+        let isTrained = false;
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateStatus();
+        });
+
+        socket.on('training_status', (data) => {
+            const loading = document.getElementById('loading');
+            const message = document.getElementById('message');
+            
+            if (data.status === 'training' || data.status === 'retraining') {
+                loading.classList.add('active');
+                message.className = 'message';
+                message.textContent = data.message;
+                message.style.display = 'block';
+            } else if (data.status === 'complete') {
+                loading.classList.remove('active');
+                message.className = 'message success';
+                message.textContent = data.message;
+                updateStatus();
+            }
+        });
+
+        socket.on('model_metrics', (data) => {
+            if (data.model === 'h2o' || data.model === 'model2') {
+                updateH2OMetrics(data.metrics);
+            }
+        });
+
+        socket.on('new_prediction', (data) => {
+            displayH2OPrediction(data);
+        });
+
+        socket.on('new_bayesian_prediction', (data) => {
+            displayBayesianPrediction(data);
+        });
+
+        socket.on('bet_placed', (data) => {
+            console.log('H2O bet placed:', data);
+        });
+
+        socket.on('bet_placed_bayesian', (data) => {
+            console.log('Bayesian bet placed:', data);
+        });
+
+        socket.on('bet_result', (data) => {
+            console.log('H2O bet result:', data);
+            updateStatus();
+        });
+
+        socket.on('bet_result_bayesian', (data) => {
+            console.log('Bayesian bet result:', data);
+            updateStatus();
+        });
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function updateStatus() {
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    isTrained = data.is_trained;
+                    isRunning = data.is_running;
+                    updateUI();
+                    
+                    // Update H2O model status
+                    if (data.h2o_model) {
+                        document.getElementById('h2oStatus').textContent = 
+                            data.h2o_model.loaded ? '✅ Loaded' : '❌ Not Loaded';
+                        if (data.h2o_model.metrics) {
+                            updateH2OMetrics(data.h2o_model.metrics);
+                        }
+                    }
+                    
+                    // Update betting stats
+                    if (data.betting_stats) {
+                        updateH2OStats(data.betting_stats);
+                    }
+                    if (data.betting_stats_bayesian) {
+                        updateBayesianStats(data.betting_stats_bayesian);
+                    }
+                });
+        }
+
+        function updateUI() {
+            const statusBanner = document.getElementById('statusBanner');
+            const statusText = document.getElementById('statusText');
+            const trainBtn = document.getElementById('trainBtn');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+
+            if (isTrained) {
+                statusBanner.className = 'status-banner running';
+                statusText.textContent = isRunning ? 
+                    '🟢 Monitoring Active - Both models predicting' : 
+                    '🟡 Models Ready - Start monitoring to begin predictions';
+                trainBtn.disabled = false;
+                startBtn.disabled = isRunning;
+                stopBtn.disabled = !isRunning;
+            } else {
+                statusBanner.className = 'status-banner not-trained';
+                statusText.textContent = '🔴 H2O Model Not Trained - Please train first (Bayesian is always available)';
+                trainBtn.disabled = false;
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function updateH2OMetrics(metrics) {
+            if (metrics.auc !== undefined) {
+                document.getElementById('h2oAUC').textContent = metrics.auc.toFixed(4);
+            }
+        }
+
+        function displayH2OPrediction(data) {
+            const card = document.getElementById('h2oPrediction');
+            card.style.display = 'block';
+            
+            const prob = data.probability_gt_2 || 0;
+            const probPercent = (prob * 100).toFixed(1);
+            document.getElementById('h2oProb').textContent = probPercent + '%';
+            
+            const bettingAction = data.betting_action || 'NO_BET';
+            const actionElement = document.getElementById('h2oAction');
+            actionElement.style.display = 'block';
+            
+            let actionText = '';
+            let actionClass = '';
+            if (bettingAction === 'BET') {
+                actionText = '🎯 BET (Prob ≥ 0.7)';
+                actionClass = 'action-bet';
+            } else if (bettingAction === 'SMALL_BET') {
+                actionText = '⚠️ SMALL BET (Prob ≥ 0.55)';
+                actionClass = 'action-small-bet';
+            } else {
+                actionText = '❌ NO BET (Prob < 0.55)';
+                actionClass = 'action-no-bet';
+            }
+            actionElement.textContent = actionText;
+            actionElement.className = 'betting-action ' + actionClass;
+            
+            if (data.confidence !== undefined) {
+                document.getElementById('h2oConfidence').textContent = data.confidence.toFixed(1) + '%';
+            }
+            
+            const riskBadge = document.getElementById('h2oRiskBadge');
+            const riskLevel = data.risk_level || 'HIGH';
+            riskBadge.textContent = riskLevel;
+            riskBadge.className = 'risk-badge risk-' + riskLevel.toLowerCase();
+        }
+
+        function displayBayesianPrediction(data) {
+            const card = document.getElementById('bayesianPrediction');
+            card.style.display = 'block';
+            
+            const prob = data.probability_gt_threshold || 0;
+            const probPercent = (prob * 100).toFixed(1);
+            document.getElementById('bayesianProb').textContent = probPercent + '%';
+            
+            const bettingAction = data.betting_action || 'NO_BET';
+            const actionElement = document.getElementById('bayesianAction');
+            actionElement.style.display = 'block';
+            
+            let actionText = '';
+            let actionClass = '';
+            if (bettingAction === 'BET') {
+                actionText = '🎯 BET RECOMMENDED';
+                actionClass = 'action-bet';
+            } else if (bettingAction === 'SMALL_BET') {
+                actionText = '⚠️ SMALL BET';
+                actionClass = 'action-small-bet';
+            } else {
+                actionText = '❌ NO BET';
+                actionClass = 'action-no-bet';
+            }
+            actionElement.textContent = actionText;
+            actionElement.className = 'betting-action ' + actionClass;
+            
+            if (data.confidence !== undefined) {
+                document.getElementById('bayesianConfidence').textContent = data.confidence.toFixed(1) + '%';
+            }
+            
+            const bayesParams = data.bayesian_params || {};
+            if (bayesParams.alpha !== undefined) {
+                document.getElementById('bayesianAlpha').textContent = bayesParams.alpha.toFixed(2);
+            }
+            if (bayesParams.beta !== undefined) {
+                document.getElementById('bayesianBeta').textContent = bayesParams.beta.toFixed(2);
+            }
+            
+            const riskBadge = document.getElementById('bayesianRiskBadge');
+            const riskLevel = data.risk_level || 'HIGH';
+            riskBadge.textContent = riskLevel;
+            riskBadge.className = 'risk-badge risk-' + riskLevel.toLowerCase();
+            
+            if (data.reason) {
+                document.getElementById('bayesianReason').style.display = 'block';
+                document.getElementById('bayesianReasonText').textContent = data.reason;
+            }
+        }
+
+        function updateH2OStats(data) {
+            if (data.bankroll !== undefined) {
+                document.getElementById('h2oBankroll').textContent = '₹' + data.bankroll.toLocaleString('en-IN', {minimumFractionDigits: 2});
+            }
+            if (data.total_bets !== undefined) {
+                document.getElementById('h2oTotalBets').textContent = data.total_bets;
+            }
+            if (data.wins !== undefined && data.losses !== undefined) {
+                document.getElementById('h2oWinsLosses').textContent = `${data.wins}/${data.losses}`;
+            }
+            if (data.total_profit !== undefined) {
+                const pl = data.total_profit;
+                const plElement = document.getElementById('h2oPL');
+                plElement.textContent = '₹' + pl.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                plElement.style.color = pl >= 0 ? '#4caf50' : '#f44336';
+            }
+        }
+
+        function updateBayesianStats(data) {
+            if (data.bankroll !== undefined) {
+                document.getElementById('bayesianBankroll').textContent = '₹' + data.bankroll.toLocaleString('en-IN', {minimumFractionDigits: 2});
+            }
+            if (data.total_bets !== undefined) {
+                document.getElementById('bayesianTotalBets').textContent = data.total_bets;
+            }
+            if (data.wins !== undefined && data.losses !== undefined) {
+                document.getElementById('bayesianWinsLosses').textContent = `${data.wins}/${data.losses}`;
+            }
+            if (data.total_profit !== undefined) {
+                const pl = data.total_profit;
+                const plElement = document.getElementById('bayesianPL');
+                plElement.textContent = '₹' + pl.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                plElement.style.color = pl >= 0 ? '#4caf50' : '#f44336';
+            }
+        }
+
+        function trainModel(model) {
+            const loading = document.getElementById('loading');
+            const message = document.getElementById('message');
+            
+            loading.classList.add('active');
+            message.className = 'message';
+            message.textContent = 'Training H2O AutoML model... This may take a few minutes.';
+            message.style.display = 'block';
+            
+            fetch('/api/train', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: model })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    if (data.success) {
+                        message.className = 'message success';
+                        message.textContent = 'Training complete!';
+                        updateStatus();
+                    } else {
+                        message.className = 'message error';
+                        message.textContent = data.error || 'Training failed';
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    message.className = 'message error';
+                    message.textContent = 'Error: ' + err.message;
+                });
+        }
+
+        function runSimulation() {
+            const loading = document.getElementById('loading');
+            const message = document.getElementById('message');
+            
+            loading.classList.add('active');
+            message.className = 'message';
+            message.textContent = 'Running simulations... This may take a few minutes.';
+            message.style.display = 'block';
+            
+            fetch('/api/simulate', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    loading.classList.remove('active');
+                    if (data.success) {
+                        message.className = 'message success';
+                        message.textContent = 'Simulations complete!';
+                        displaySimulationResults(data.results);
+                        switchTab('simulations');
+                    } else {
+                        message.className = 'message error';
+                        message.textContent = data.error || 'Simulation failed';
+                    }
+                })
+                .catch(err => {
+                    loading.classList.remove('active');
+                    message.className = 'message error';
+                    message.textContent = 'Error: ' + err.message;
+                });
+        }
+
+        function displaySimulationResults(results) {
+            // H2O results
+            if (results.h2o_binary) {
+                const h2o = results.h2o_binary;
+                const html = `
+                    <div class="result-item">
+                        <span class="result-label">Final Balance:</span>
+                        <span class="result-value">₹${h2o.final_balance.toFixed(2)}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Total Return:</span>
+                        <span class="result-value ${h2o.total_return_pct >= 0 ? 'positive' : 'negative'}">${h2o.total_return_pct.toFixed(2)}%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Sharpe Ratio:</span>
+                        <span class="result-value">${h2o.sharpe_ratio.toFixed(3)}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Max Drawdown:</span>
+                        <span class="result-value negative">${h2o.max_drawdown_pct.toFixed(2)}%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Total Bets:</span>
+                        <span class="result-value">${h2o.total_bets}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Win Rate:</span>
+                        <span class="result-value">${h2o.win_rate.toFixed(2)}%</span>
+                    </div>
+                `;
+                document.getElementById('h2oSimulationResults').innerHTML = html;
+            }
+            
+            // Bayesian results
+            if (results.bayesian) {
+                const bayesian = results.bayesian;
+                const html = `
+                    <div class="result-item">
+                        <span class="result-label">Final Balance:</span>
+                        <span class="result-value">₹${bayesian.final_balance.toFixed(2)}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Total Return:</span>
+                        <span class="result-value ${bayesian.total_return_pct >= 0 ? 'positive' : 'negative'}">${bayesian.total_return_pct.toFixed(2)}%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Sharpe Ratio:</span>
+                        <span class="result-value">${bayesian.sharpe_ratio.toFixed(3)}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Max Drawdown:</span>
+                        <span class="result-value negative">${bayesian.max_drawdown_pct.toFixed(2)}%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Total Bets:</span>
+                        <span class="result-value">${bayesian.total_bets}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Win Rate:</span>
+                        <span class="result-value">${bayesian.win_rate.toFixed(2)}%</span>
+                    </div>
+                `;
+                document.getElementById('bayesianSimulationResults').innerHTML = html;
+            }
+        }
+
+        function startMonitoring() {
+            fetch('/api/start', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        isRunning = true;
+                        updateUI();
+                    }
+                });
+        }
+
+        function stopMonitoring() {
+            fetch('/api/stop', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        isRunning = false;
+                        updateUI();
+                    }
+                });
+        }
+
+        // Load simulation results on page load
+        function loadSimulationResults() {
+            fetch('/api/simulation_results')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.h2o_binary || data.bayesian) {
+                        displaySimulationResults(data);
+                    }
+                })
+                .catch(err => {
+                    // No results yet, that's okay
+                });
+        }
+
+        // Initial status update
+        updateStatus();
+        loadSimulationResults();
+        
+        // Update status every 5 seconds
+        setInterval(updateStatus, 5000);
+    </script>
+</body>
+</html>

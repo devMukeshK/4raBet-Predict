@@ -1,5 +1,7 @@
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.safari.options import Options as SafariOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -8,19 +10,42 @@ import time
 import csv
 import os
 import glob
-from datetime import datetime
+from datetime import datetime, timedelta
+import pandas as pd
 
 # --- Config ---
+# Choose browser: "firefox", "chrome", or "safari"
+BROWSER = "chrome"  # Recommended: Firefox is often faster for automation
+
 LOGIN_URL = "https://4rabet365.com/"  # homepage with login button
-USERNAME = "9852241667"
-PASSWORD = "Target@2025"
+USERNAME = "7979787871"
+PASSWORD = "Adidas@1234"
+data_folder = "data"
+os.makedirs(data_folder, exist_ok=True)
+global_csv_filename = os.path.join(data_folder, "aviator_payouts_global.csv")
+current_csv_filename = os.path.join(data_folder, f"aviator_payouts_{datetime.now().strftime('%Y%m%d')}.csv")
+# Initialize browser based on selection
+driver = None
+if BROWSER.lower() == "firefox":
+    options = FirefoxOptions()
+    # options.add_argument('--headless')  # Uncomment to run headless
+    options.set_preference("dom.webdriver.enabled", False)
+    options.set_preference("useAutomationExtension", False)
+    driver = webdriver.Firefox(options=options)
+    print("🦊 Using Firefox browser")
+elif BROWSER.lower() == "safari":
+    options = SafariOptions()
+    # Safari doesn't support headless mode
+    driver = webdriver.Safari(options=options)
+    print("🦁 Using Safari browser")
+else:  # Default to Chrome
+    options = ChromeOptions()
+    # options.add_argument('--headless')  # Uncomment to run headless
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--start-maximized")
+    driver = webdriver.Chrome(options=options)
+    print("🌐 Using Chrome browser")
 
-options = Options()
-# options.add_argument('--headless')  # Uncomment to run headless
-options.add_argument("--disable-blink-features=AutomationControlled")
-options.add_argument("--start-maximized")
-
-driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, 20)
 
 try:
@@ -565,36 +590,60 @@ try:
             print("📊 Starting continuous monitoring of the latest payout (first item)...")
             print("   Will log timestamp and multiplier to CSV until stopped (Ctrl+C).")
 
-            # Find existing CSV file or create new one
-            existing_csv_files = glob.glob("aviator_payouts_*.csv")
-            csv_filename = None
-            existing_values = set()  # Track values already in CSV to avoid duplicates
+            # Initialize dual CSV file system using pandas
+            # 1. global_csv_filename - stores ALL multipliers (all-time cumulative)
+            # 2. current_csv_filename - stores data from previous day (daily file)
             
-            if existing_csv_files:
-                # Use the most recent CSV file
-                csv_filename = max(existing_csv_files, key=os.path.getmtime)
-                print(f"📂 Found existing CSV file: {csv_filename}")
-                
-                # Read existing data to track what's already written
-                try:
-                    with open(csv_filename, "r", newline="", encoding="utf-8") as csvfile:
-                        reader = csv.reader(csvfile)
-                        next(reader, None)  # Skip header
-                        for row in reader:
-                            if len(row) >= 2:
-                                # Store timestamp+multiplier as unique identifier
-                                existing_values.add((row[0], row[1]))
-                    print(f"✅ Loaded {len(existing_values)} existing records from CSV")
-                except Exception as e:
-                    print(f"⚠️  Could not read existing CSV: {e}")
-                    existing_values = set()
+            df_global = None
+            df_current = None
+            
+            # Initialize global CSV (file 1) - stores all multipliers
+            if not os.path.exists(global_csv_filename):
+                print(f"📂 Global CSV doesn't exist. Creating: {global_csv_filename}")
+                df_global = pd.DataFrame(columns=['timestamp', 'multiplier'])
+                df_global.to_csv(global_csv_filename, index=False)
             else:
-                # Create new CSV file if none exists
-                csv_filename = f"aviator_payouts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                with open(csv_filename, "w", newline="", encoding="utf-8") as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(["timestamp", "multiplier"])
-                print(f"✅ New CSV file created: {csv_filename}")
+                print(f"📂 Found global CSV: {global_csv_filename}")
+                try:
+                    df_global = pd.read_csv(global_csv_filename)
+                    df_global['timestamp'] = pd.to_datetime(df_global['timestamp'])
+                    print(f"✅ Loaded {len(df_global)} existing records from global CSV")
+                except Exception as e:
+                    print(f"⚠️  Could not read global CSV: {e}")
+                    df_global = pd.DataFrame(columns=['timestamp', 'multiplier'])
+            
+            # Initialize current CSV (file 2) - stores data from previous day
+            if not os.path.exists(current_csv_filename):
+                print(f"📂 Current CSV doesn't exist. Creating: {current_csv_filename}")
+                df_current = pd.DataFrame(columns=['timestamp', 'multiplier'])
+                
+                # Copy data from global CSV from previous date to latest
+                if df_global is not None and len(df_global) > 0:
+                    try:
+                        yesterday = datetime.now() - timedelta(days=1)
+                        # Filter data from yesterday onwards
+                        df_recent = df_global[df_global['timestamp'] >= yesterday].copy()
+                        if len(df_recent) > 0:
+                            df_current = df_recent.copy()
+                            df_current.to_csv(current_csv_filename, index=False)
+                            print(f"✅ Copied {len(df_recent)} records from global CSV (from previous date) to current CSV")
+                        else:
+                            df_current.to_csv(current_csv_filename, index=False)
+                            print(f"✅ Created empty current CSV (no recent data in global CSV)")
+                    except Exception as e:
+                        print(f"⚠️  Could not copy data from global CSV: {e}")
+                        df_current.to_csv(current_csv_filename, index=False)
+                else:
+                    df_current.to_csv(current_csv_filename, index=False)
+            else:
+                print(f"📂 Found current CSV: {current_csv_filename}")
+                try:
+                    df_current = pd.read_csv(current_csv_filename)
+                    df_current['timestamp'] = pd.to_datetime(df_current['timestamp'])
+                    print(f"✅ Loaded {len(df_current)} existing records from current CSV")
+                except Exception as e:
+                    print(f"⚠️  Could not read current CSV: {e}")
+                    df_current = pd.DataFrame(columns=['timestamp', 'multiplier'])
 
             last_value = None
 
@@ -627,20 +676,53 @@ try:
                             )
 
                             if multiplier and multiplier != last_value:
-                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                timestamp = datetime.now()
+                                timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                                 
-                                # Check if this value+timestamp combination already exists
-                                value_key = (timestamp, multiplier)
-                                if value_key not in existing_values:
-                                    with open(csv_filename, "a", newline="", encoding="utf-8") as csvfile:
-                                        writer = csv.writer(csvfile)
-                                        writer.writerow([timestamp, multiplier])
-                                    existing_values.add(value_key)
-                                    last_value = multiplier
-                                    print(f"   ✅ Logged: {multiplier}x at {timestamp}")
-                                else:
-                                    # Value already exists, skip
-                                    last_value = multiplier
+                                # Create new row
+                                new_row = pd.DataFrame({
+                                    'timestamp': [timestamp_str],
+                                    'multiplier': [float(multiplier)]
+                                })
+                                
+                                # Check if this record already exists in current CSV
+                                exists_current = False
+                                if df_current is not None and len(df_current) > 0:
+                                    exists_current = ((df_current['timestamp'].astype(str) == timestamp_str) & 
+                                                     (df_current['multiplier'].astype(float) == float(multiplier))).any()
+                                
+                                # Write to current CSV first (file 2) - append if not exists
+                                if not exists_current:
+                                    try:
+                                        if df_current is None or len(df_current) == 0:
+                                            df_current = new_row.copy()
+                                        else:
+                                            df_current = pd.concat([df_current, new_row], ignore_index=True)
+                                        # Use mode='a' with header=False for faster append (but we'll use to_csv for simplicity)
+                                        df_current.to_csv(current_csv_filename, index=False)
+                                        print(f"   ✅ Logged to current CSV: {multiplier}x at {timestamp_str}")
+                                    except Exception as e:
+                                        print(f"   ⚠️  Error writing to current CSV: {e}")
+                                
+                                # Check if this record already exists in global CSV
+                                exists_global = False
+                                if df_global is not None and len(df_global) > 0:
+                                    exists_global = ((df_global['timestamp'].astype(str) == timestamp_str) & 
+                                                    (df_global['multiplier'].astype(float) == float(multiplier))).any()
+                                
+                                # Then write to global CSV (file 1) - append if not exists
+                                if not exists_global:
+                                    try:
+                                        if df_global is None or len(df_global) == 0:
+                                            df_global = new_row.copy()
+                                        else:
+                                            df_global = pd.concat([df_global, new_row], ignore_index=True)
+                                        df_global.to_csv(global_csv_filename, index=False)
+                                        print(f"   ✅ Logged to global CSV: {multiplier}x at {timestamp_str}")
+                                    except Exception as e:
+                                        print(f"   ⚠️  Error writing to global CSV: {e}")
+                                
+                                last_value = multiplier
                     else:
                         print("   ⏳ No payout elements found yet; retrying...")
 
@@ -648,7 +730,8 @@ try:
 
                 except KeyboardInterrupt:
                     print("\n⚠️  Monitoring stopped by user (Ctrl+C)")
-                    print(f"📁 CSV saved to {csv_filename}")
+                    print(f"📁 Global CSV: {global_csv_filename}")
+                    print(f"📁 Current CSV: {current_csv_filename}")
                     break
                 except Exception as e:
                     print(f"   ⚠️  Monitoring error: {e}")

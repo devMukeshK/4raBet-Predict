@@ -1,6 +1,7 @@
 selenium
 pandas
 flask
+flask-socketio
 scikit-learn
 numpy
 joblib
@@ -8,3 +9,10 @@ watchdog
 xgboost
 lightgbm
 scikit-learn>=1.0
+torch
+matplotlib
+seaborn
+langchain
+langchain-openai
+openai
+h2o
