@@ -409,6 +409,421 @@ def calculate_ev_and_sharpe(predicted_prob, predicted_multiplier, bet_amount, re
         'sharpe': sharpe,
         'expected_return': expected_return
     }
+from flask import Flask, render_template, request, jsonify
+import pandas as pd
+import numpy as np
+import os
+import glob
+import threading
+import time
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+from scipy import stats
+from scipy.optimize import minimize
+from collections import deque
+
+# Try to import hmmlearn for HMM regime detection
+HMM_AVAILABLE = False
+try:
+    from hmmlearn import hmm
+    HMM_AVAILABLE = True
+except (ImportError, Exception) as e:
+    HMM_AVAILABLE = False
+    print(f"⚠️ hmmlearn not available: {str(e)[:100]}")
+    print("   Install with: pip install hmmlearn")
+
+# Try to import H2O AutoML
+H2O_AVAILABLE = False
+try:
+    import h2o
+    from h2o.automl import H2OAutoML
+    H2O_AVAILABLE = True
+    print("✅ H2O AutoML available")
+except (ImportError, Exception) as e:
+    H2O_AVAILABLE = False
+    print(f"⚠️ H2O AutoML not available: {str(e)[:100]}")
+    print("   Install with: pip install h2o")
+
+app = Flask(__name__)
+
+# Global variables (Scikit-Learn removed - using H2O AutoML only)
+last_csv_size = 0
+last_csv_mtime = 0
+last_training_record_count = 0  # Track how many records were processed last time
+last_prediction_multiplier = None  # Track last multiplier used for prediction update (prevents updates during flight)
+
+# ===== H2O AutoML Global Variables =====
+h2o_model = None
+h2o_accuracy = None
+h2o_current_prediction = None
+h2o_prediction_history = []
+h2o_last_retrain_record_count = 0
+h2o_retrain_interval = 10  # Retrain H2O model every 10 new records
+h2o_training_history = []
+h2o_performance_history = deque(maxlen=100)
+h2o_initialized = False
+h2o_training_in_progress = False  # Track if training is currently running
+h2o_last_training_attempt = None  # Track last training attempt timestamp
+
+# H2O Betting simulation storage
+h2o_min_range_bets = []  # H2O bets based on minimum range value
+h2o_min_range_balance = 50000.0  # Starting balance for H2O betting
+h2o_last_bet_record_count = 0  # Track last processed record for H2O betting
+auto_train_enabled = True
+training_lock = threading.Lock()
+all_training_data = None  # Store all data for instant sync
+
+# Betting simulation storage
+betting_history = []  # List of bets: {timestamp, bet_amount, predicted_range, actual_multiplier, profit_loss, balance}
+current_balance = 50000.0  # Starting balance (max amount)
+base_bet_amount = 100.0  # Base bet amount
+max_balance = 50000.0  # Maximum balance
+betting_enabled = True
+last_bet_timestamp = None
+last_bet_record_count = 0  # Track which record we last bet on
+processed_multipliers = set()  # Track processed (timestamp, multiplier) pairs
+
+# Separate tracking for minimum range and prediction value bets
+min_range_bets = []  # Bets based on minimum range value
+prediction_bets = []  # Bets based on prediction value
+min_range_balance = 50000.0  # Balance for minimum range bets
+prediction_balance = 50000.0  # Balance for prediction value bets
+
+# File to persist every bet decision
+bet_log_file = os.path.join(os.path.dirname(__file__), "betting_log.csv")
+
+# ===== ML PROBABILITY SYSTEM GLOBALS =====
+# Bayesian smoothing
+bayesian_prior_alpha = 2.0  # Prior for beta distribution
+bayesian_prior_beta = 2.0
+bayesian_history = deque(maxlen=100)  # Recent prediction accuracy
+
+# Probability calibration
+calibration_data = deque(maxlen=200)  # (predicted_prob, actual_outcome)
+calibration_model = None
+
+# HMM regime detection
+hmm_model = None
+current_regime = None  # 'bull', 'bear', 'neutral'
+regime_history = deque(maxlen=50)
+
+# Risk management
+stop_loss_threshold = -0.20  # Stop betting if down 20% from peak
+take_profit_threshold = 0.30  # Take profit if up 30% from start
+peak_balance = 50000.0  # Track peak balance for stop-loss
+starting_balance = 50000.0  # Starting balance for take-profit
+
+# Variance circuit breaker
+variance_threshold = 2.5  # Pause if variance exceeds 2.5x normal
+recent_variances = deque(maxlen=20)
+normal_variance = None
+
+# Confidence decay
+prediction_timestamps = {}  # Track when predictions were made
+confidence_decay_rate = 0.05  # 5% decay per minute
+
+# Kelly Criterion
+kelly_fraction_history = deque(maxlen=50)
+max_kelly_fraction = 0.25  # Cap at 25% of bankroll
+
+# Monte-Carlo
+monte_carlo_simulations = 1000
+monte_carlo_risk_threshold = 0.15  # Max 15% probability of ruin
+
+# EV + Sharpe
+ev_history = deque(maxlen=50)
+sharpe_history = deque(maxlen=50)
+
+# Model training progress tracking
+model_performance_history = deque(maxlen=100)  # Track model performance over time
+training_history = []  # Track training events: {timestamp, records_count, mae, r2, win_rate}
+
+# Track the prediction that was active when bet was placed (for profit/loss calculation)
+last_bet_prediction = None  # For H2O predictions
+current_prediction = None  # For legacy predictions
+
+def append_bet_to_csv(bet_record: dict):
+    """Persist a single bet decision to betting_log.csv."""
+    try:
+        # Define stable header order
+        headers = [
+            "timestamp",
+            "bet_type",
+            "bet_placed",
+            "predicted_range",
+            "pred_min",
+            "pred_max",
+            "predicted_value",
+            "actual_multiplier",
+            "bet_amount",
+            "payout",          # total return when win (0 when loss)
+            "profit_loss",     # net change to wallet
+            "balance_before",
+            "balance_after",
+            "is_win",
+            "confidence",
+        ]
+
+        # Write header if file does not exist
+        write_header = not os.path.exists(bet_log_file)
+        with open(bet_log_file, "a", newline="", encoding="utf-8") as f:
+            import csv
+
+            writer = csv.DictWriter(f, fieldnames=headers)
+            if write_header:
+                writer.writeheader()
+            # Filter to known headers; default missing to ''
+            row = {h: bet_record.get(h, "") for h in headers}
+            writer.writerow(row)
+    except Exception as e:
+        print(f"⚠️  Failed to append bet to CSV: {e}")
+
+def load_latest_csv():
+    """Load the most recent CSV file from the directory."""
+    csv_files = glob.glob("aviator_payouts_*.csv")
+    if not csv_files:
+        return None, None
+    latest_file = max(csv_files, key=os.path.getctime)
+    try:
+        df = pd.read_csv(latest_file)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp')
+        # Validate multipliers: must be >= 1.0 (never negative, minimum is 1.0)
+        df['multiplier'] = pd.to_numeric(df['multiplier'], errors='coerce')
+        df = df[df['multiplier'] >= 1.0]  # Filter out invalid values (< 1.0)
+        df = df.dropna().reset_index(drop=True)
+        return df, latest_file
+    except Exception as e:
+        return None, str(e)
+
+def check_csv_updated():
+    """Check if CSV file has been updated - ALWAYS detect new records."""
+    global last_csv_size, last_csv_mtime, last_training_record_count
+    df, file_info = load_latest_csv()
+    if df is None or file_info is None:
+        return False, None, None
+    
+    try:
+        current_size = os.path.getsize(file_info)
+        current_mtime = os.path.getmtime(file_info)
+        current_records = len(df)
+        
+        # Always check if record count increased (most reliable indicator)
+        records_increased = current_records > last_training_record_count
+        
+        # Also check file modification (for immediate detection)
+        file_changed = (current_size != last_csv_size or current_mtime != last_csv_mtime)
+        
+        # If records increased OR file changed, it's an update
+        if records_increased or file_changed:
+            # Update tracking immediately
+            last_csv_size = current_size
+            last_csv_mtime = current_mtime
+            # Note: last_training_record_count will be updated after processing
+            return True, df, file_info
+        
+        return False, df, file_info
+    except Exception as e:
+        print(f"⚠️ Error checking CSV update: {e}")
+        return False, df, file_info
+
+def handle_outliers(df, multiplier_col='multiplier', method='winsorize', percentile_low=1, percentile_high=99):
+    """Handle outliers in multiplier data."""
+    df = df.copy()
+    multipliers = df[multiplier_col].values
+    
+    if method == 'winsorize':
+        # Cap extreme values at percentiles
+        low_threshold = np.percentile(multipliers, percentile_low)
+        high_threshold = np.percentile(multipliers, percentile_high)
+        df[multiplier_col] = df[multiplier_col].clip(lower=low_threshold, upper=high_threshold)
+    elif method == 'log_transform':
+        # Log transform to reduce impact of extreme values
+        df[multiplier_col] = np.log1p(df[multiplier_col])
+    
+    return df
+
+# ===== ML PROBABILITY SYSTEM FUNCTIONS =====
+
+def bayesian_smoothing(raw_probability, alpha_prior=2.0, beta_prior=2.0):
+    """Apply Bayesian smoothing to probability estimates.
+    
+    Uses Beta distribution as conjugate prior for binomial outcomes.
+    Updates prior based on historical accuracy.
+    """
+    global bayesian_history, bayesian_prior_alpha, bayesian_prior_beta
+    
+    # Update priors based on recent history
+    if len(bayesian_history) > 10:
+        # Calculate success rate from history
+        successes = sum(1 for x in bayesian_history if x > 0.5)  # Assuming >0.5 means "win"
+        total = len(bayesian_history)
+        
+        # Update Beta parameters (conjugate prior)
+        alpha = alpha_prior + successes
+        beta = beta_prior + (total - successes)
+    else:
+        alpha = alpha_prior
+        beta = beta_prior
+    
+    # Bayesian update: combine prior with current observation
+    # Use Beta-Binomial conjugate update
+    smoothed_prob = (alpha + raw_probability * 10) / (alpha + beta + 10)
+    
+    # Ensure probability is in [0, 1]
+    smoothed_prob = max(0.0, min(1.0, smoothed_prob))
+    
+    return smoothed_prob
+
+def calibrate_probability(raw_probability, actual_outcome=None):
+    """Calibrate probability using Platt scaling (sigmoid) or isotonic regression.
+    
+    If actual_outcome is provided, update calibration model.
+    """
+    global calibration_data, calibration_model
+    
+    if actual_outcome is not None:
+        # Add to calibration data
+        calibration_data.append((raw_probability, 1.0 if actual_outcome >= 2.0 else 0.0))
+    
+    if len(calibration_data) < 20:
+        # Not enough data for calibration, return raw
+        return raw_probability
+    
+    # Simple Platt scaling: P_calibrated = 1 / (1 + exp(A * P_raw + B))
+    # Fit A and B using logistic regression on calibration data
+    try:
+        from sklearn.linear_model import LogisticRegression
+        X = np.array([[p] for p, _ in calibration_data])
+        y = np.array([a for _, a in calibration_data])
+        
+        # Simple logistic regression (Platt scaling)
+        lr = LogisticRegression()
+        lr.fit(X, y)
+        
+        # Predict calibrated probability
+        calibrated = lr.predict_proba([[raw_probability]])[0][1]
+        return max(0.0, min(1.0, calibrated))
+    except:
+        # Fallback: linear interpolation
+        sorted_data = sorted(calibration_data)
+        if raw_probability <= sorted_data[0][0]:
+            return sorted_data[0][1]
+        if raw_probability >= sorted_data[-1][0]:
+            return sorted_data[-1][1]
+        
+        # Linear interpolation
+        for i in range(len(sorted_data) - 1):
+            if sorted_data[i][0] <= raw_probability <= sorted_data[i+1][0]:
+                x1, y1 = sorted_data[i]
+                x2, y2 = sorted_data[i+1]
+                calibrated = y1 + (y2 - y1) * (raw_probability - x1) / (x2 - x1)
+                return max(0.0, min(1.0, calibrated))
+    
+    return raw_probability
+
+def detect_hmm_regime(df, n_states=3):
+    """Detect market regime using Hidden Markov Model.
+    
+    States: 0=Bear (low), 1=Neutral, 2=Bull (high)
+    """
+    global hmm_model, current_regime, regime_history
+    
+    if len(df) < 30:
+        return 'neutral'
+    
+    try:
+        # Prepare observations (multipliers)
+        observations = df['multiplier'].values[-50:].reshape(-1, 1)
+        
+        if HMM_AVAILABLE:
+            # Use hmmlearn
+            if hmm_model is None:
+                # Initialize HMM
+                hmm_model = hmm.GaussianHMM(n_components=n_states, covariance_type="full", n_iter=100)
+                hmm_model.fit(observations)
+            else:
+                # Update model with new data
+                hmm_model.fit(observations)
+            
+            # Predict current state
+            state = hmm_model.predict(observations[-1:])[0]
+            
+            # Map state to regime
+            regime_map = {0: 'bear', 1: 'neutral', 2: 'bull'}
+            if n_states == 3:
+                current_regime = regime_map.get(state, 'neutral')
+            else:
+                # For other n_states, use state index
+                if state == 0:
+                    current_regime = 'bear'
+                elif state == n_states - 1:
+                    current_regime = 'bull'
+                else:
+                    current_regime = 'neutral'
+        else:
+            # Simple heuristic-based regime detection
+            recent_mean = np.mean(observations[-10:])
+            recent_std = np.std(observations[-10:])
+            global_mean = np.mean(observations)
+            
+            if recent_mean < global_mean - recent_std:
+                current_regime = 'bear'
+            elif recent_mean > global_mean + recent_std:
+                current_regime = 'bull'
+            else:
+                current_regime = 'neutral'
+        
+        regime_history.append(current_regime)
+        return current_regime
+    except Exception as e:
+        print(f"⚠️ HMM regime detection error: {e}")
+        return 'neutral'
+
+def calculate_ev_and_sharpe(predicted_prob, predicted_multiplier, bet_amount, recent_returns=None):
+    """Calculate Expected Value (EV) and Sharpe ratio.
+    
+    EV = P(win) * (multiplier - 1) * bet - P(loss) * bet
+    Sharpe = (mean_return - risk_free_rate) / std_return
+    """
+    global ev_history, sharpe_history
+    
+    # Calculate EV
+    win_prob = predicted_prob
+    loss_prob = 1 - win_prob
+    
+    # Expected return per bet
+    expected_return = win_prob * (predicted_multiplier - 1) * bet_amount - loss_prob * bet_amount
+    ev = expected_return / bet_amount if bet_amount > 0 else 0  # EV as fraction
+    
+    ev_history.append(ev)
+    
+    # Calculate Sharpe ratio
+    if recent_returns is not None and len(recent_returns) > 10:
+        returns = np.array(recent_returns)
+        mean_return = np.mean(returns)
+        std_return = np.std(returns) if len(returns) > 1 else 0.01
+        
+        # Risk-free rate = 0 (no risk-free alternative in betting)
+        sharpe = mean_return / std_return if std_return > 0 else 0
+    else:
+        # Estimate Sharpe from EV and variance
+        # Assume variance scales with bet size
+        estimated_std = bet_amount * 0.5  # Rough estimate
+        sharpe = ev * bet_amount / estimated_std if estimated_std > 0 else 0
+    
+    sharpe_history.append(sharpe)
+    
+    return {
+        'ev': ev,
+        'ev_percentage': ev * 100,
+        'sharpe': sharpe,
+        'expected_return': expected_return
+    }
 
 def monte_carlo_risk_filter(predicted_prob, predicted_multiplier, bet_amount, balance, n_simulations=1000):
     """Monte-Carlo simulation to assess risk of ruin.
@@ -1330,7 +1745,7 @@ def train_h2o_model(df, auto=False):
 
 def predict_h2o_next(df):
     """Predict the next multiplier value using trained H2O AutoML model."""
-    global h2o_model, h2o_current_prediction, h2o_prediction_history
+    global h2o_model, h2o_current_prediction, h2o_prediction_history, last_bet_prediction
     
     if h2o_model is None:
         return None, "H2O model not trained yet. Please train the model first."
@@ -1416,7 +1831,18 @@ def predict_h2o_next(df):
             'data_points_used': len(df)
         }
         
+        # Before updating to new prediction, if this is the first prediction, initialize last_bet_prediction
+        # This ensures profit/loss calculations use the last predicted min range value, not the current one
+        if last_bet_prediction is None and h2o_current_prediction is None:
+            # This is the first prediction, will be set below
+            pass
+        
         h2o_current_prediction = result
+        
+        # Initialize last_bet_prediction if it's None (for first prediction only)
+        # After the first bet, last_bet_prediction will be updated in check_and_process_h2o_bet()
+        if last_bet_prediction is None:
+            last_bet_prediction = result.copy()
         
         # Add to prediction history (keep all, no limit)
         if not h2o_prediction_history or h2o_prediction_history[-1].get('predicted_multiplier') != result.get('predicted_multiplier'):
@@ -1898,6 +2324,7 @@ def check_and_process_h2o_bet():
     """
     global h2o_current_prediction, all_training_data, h2o_last_bet_record_count, processed_multipliers
     global h2o_min_range_bets, h2o_min_range_balance, base_bet_amount, max_balance
+    global last_bet_prediction  # Add this
     
     if h2o_current_prediction is None or all_training_data is None or not betting_enabled:
         return
@@ -1910,22 +2337,27 @@ def check_and_process_h2o_bet():
         if len(df) == 0:
             return
         
-        # Get current record count
         current_record_count = len(df)
         
         # 🔧 BUG 1 FIX: Only process the latest finalized record
-        # Process only the latest record to avoid multiple bets for one prediction
         if current_record_count <= h2o_last_bet_record_count:
             return  # No new records
         
-        # Only process the latest record
         idx = current_record_count - 1
-        
-        # Get the actual multiplier for this record
         actual_multiplier = float(df['multiplier'].iloc[idx])
         
-        # Get prediction range from H2O prediction
-        pred_range = h2o_current_prediction.get('prediction_range', '')
+        # 🔧 FIX: Use last_bet_prediction if available (the prediction that was active when bet was placed)
+        # Otherwise use current prediction as fallback (for first bet)
+        if last_bet_prediction is None:
+            prediction_to_use = h2o_current_prediction
+        else:
+            prediction_to_use = last_bet_prediction
+        
+        if prediction_to_use is None:
+            return
+        
+        # Get prediction range from the PREDICTION THAT WAS ACTIVE when bet was placed
+        pred_range = prediction_to_use.get('prediction_range', '')
         # Parse pred_min from range (format: "2.50 - 3.80")
         try:
             if ' - ' in pred_range:
@@ -1933,10 +2365,10 @@ def check_and_process_h2o_bet():
                 pred_max = float(pred_range.split(' - ')[1])
             else:
                 # Fallback: use predicted_multiplier
-                pred_min = float(h2o_current_prediction.get('predicted_multiplier', 0))
+                pred_min = float(prediction_to_use.get('predicted_multiplier', 0))
                 pred_max = pred_min
         except:
-            pred_min = float(h2o_current_prediction.get('predicted_multiplier', 0))
+            pred_min = float(prediction_to_use.get('predicted_multiplier', 0))
             pred_max = pred_min
         
         # RULE 1: Only bet when pred_min > 2.0 (strictly greater than 2.0)
@@ -1952,7 +2384,7 @@ def check_and_process_h2o_bet():
                 'predicted_range': pred_range,
                 'pred_min': round(pred_min, 2),
                 'pred_max': round(pred_max, 2),
-                'predicted_value': round(h2o_current_prediction.get('predicted_multiplier', 0), 2),
+                'predicted_value': round(prediction_to_use.get('predicted_multiplier', 0), 2),
                 'actual_multiplier': round(actual_multiplier, 2),
                 'bet_amount': 0.0,
                 'payout': 0.0,
@@ -1960,15 +2392,18 @@ def check_and_process_h2o_bet():
                 'balance_before': round(h2o_min_range_balance, 2),
                 'balance_after': round(h2o_min_range_balance, 2),
                 'is_win': False,
-                'confidence': h2o_current_prediction.get('confidence', 0)
+                'confidence': prediction_to_use.get('confidence', 0)
             }
             h2o_min_range_bets.append(h2o_min_range_bet)
             append_bet_to_csv(h2o_min_range_bet)
             h2o_last_bet_record_count = idx + 1
+            # Update last_bet_prediction for next bet
+            if h2o_current_prediction is not None:
+                last_bet_prediction = h2o_current_prediction.copy()
             return
         
         # RULE 2: Bet when pred_min > 2.0
-        print(f"✅ H2O: Bet PLACED - pred_min ({pred_min:.2f}x) > 2.0x")
+        print(f"✅ H2O: Bet PLACED - pred_min ({pred_min:.2f}x) > 2.0x (using last predicted min range)")
         
         # Use H2O balance for the bet
         bet_amount_per_strategy = base_bet_amount
@@ -1978,9 +2413,12 @@ def check_and_process_h2o_bet():
         if wallet_balance_before < bet_amount_per_strategy:
             print(f"⚠️  H2O: Insufficient balance: ₹{wallet_balance_before:.2f} < ₹{bet_amount_per_strategy:.2f}")
             h2o_last_bet_record_count = idx + 1
+            # Update last_bet_prediction for next bet
+            if h2o_current_prediction is not None:
+                last_bet_prediction = h2o_current_prediction.copy()
             return
         
-        # Simulate bet
+        # Simulate bet using LAST PREDICTED MIN RANGE VALUE (not current)
         min_range_result = simulate_bet_min_range(pred_min, actual_multiplier, bet_amount_per_strategy, wallet_balance_before)
         
         if min_range_result:
@@ -2000,7 +2438,7 @@ def check_and_process_h2o_bet():
                 'predicted_range': pred_range,
                 'pred_min': round(pred_min, 2),
                 'pred_max': round(pred_max, 2),
-                'predicted_value': round(h2o_current_prediction.get('predicted_multiplier', 0), 2),
+                'predicted_value': round(prediction_to_use.get('predicted_multiplier', 0), 2),
                 'actual_multiplier': round(actual_multiplier, 2),
                 'bet_amount': round(bet_amount_per_strategy, 2),
                 'payout': round(min_range_result.get('payout', 0), 2),
@@ -2008,18 +2446,22 @@ def check_and_process_h2o_bet():
                 'balance_before': round(wallet_balance_before, 2),
                 'balance_after': round(h2o_min_range_balance, 2),
                 'is_win': min_range_result['is_win'],
-                'confidence': h2o_current_prediction.get('confidence', 0)
+                'confidence': prediction_to_use.get('confidence', 0)
             }
             h2o_min_range_bets.append(h2o_min_range_bet)
             append_bet_to_csv(h2o_min_range_bet)
             
             if min_range_result['is_win']:
-                print(f"✅ H2O (WIN): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Profit=₹{min_range_result['profit_loss']:.2f}")
+                print(f"✅ H2O (WIN): pred_min={pred_min:.2f}x (from last prediction), actual={actual_multiplier:.2f}x, Profit=₹{min_range_result['profit_loss']:.2f}")
             else:
-                print(f"❌ H2O (LOSS): pred_min={pred_min:.2f}x, actual={actual_multiplier:.2f}x, Loss=₹{abs(min_range_result['profit_loss']):.2f}")
+                print(f"❌ H2O (LOSS): pred_min={pred_min:.2f}x (from last prediction), actual={actual_multiplier:.2f}x, Loss=₹{abs(min_range_result['profit_loss']):.2f}")
         
         # 🔧 BUG 2 FIX: Update immediately after betting
         h2o_last_bet_record_count = idx + 1
+        
+        # 🔧 FIX: Update last_bet_prediction to current prediction for next bet
+        if h2o_current_prediction is not None:
+            last_bet_prediction = h2o_current_prediction.copy()
         
     except Exception as e:
         print(f"⚠️  H2O betting error: {e}")
@@ -2728,7 +3170,7 @@ if __name__ == '__main__':
     # Start background tasks
     observer = start_background_tasks()
     
-    print("📊 Access the interface at: http://localhost:5001")
+    print("📊 Access the interface at: http://localhost:5005")
     print("💡 Using H2O AutoML (Best Model Selection)")
     print("💡 Features: Advanced time-series features with instant data sync")
     print("🔄 Auto-training and prediction updates enabled")
@@ -2736,7 +3178,7 @@ if __name__ == '__main__':
     print("=" * 60)
     
     try:
-        app.run(debug=False, host='0.0.0.0', port=5001, use_reloader=False)
+        app.run(debug=False, host='0.0.0.0', port=5005, use_reloader=False)
     except KeyboardInterrupt:
         print("\n⚠️  Shutting down...")
         observer.stop()
